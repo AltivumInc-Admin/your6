@@ -1,0 +1,8 @@
+{
+  "body": "{\"userId\": \"veteran123\", \"text\": \"Had a rough day today. The nightmares came back last night and I didn't sleep well. Feeling pretty isolated and not sure what to do.\"}",
+  "httpMethod": "POST",
+  "path": "/check-in",
+  "headers": {
+    "Content-Type": "application/json"
+  }
+}

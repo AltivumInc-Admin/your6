@@ -1,0 +1,11 @@
+{
+  "source": "your6.checkin",
+  "detail-type": "Low Sentiment Alert",
+  "detail": {
+    "userId": "veteran123",
+    "sentimentScore": -0.85,
+    "textPreview": "Had a rough day today. The nightmares came back last night and I didn't sleep well. Feeling pretty isolated...",
+    "timestamp": "2024-06-10T15:30:00Z",
+    "alertType": "LOW_SENTIMENT"
+  }
+}

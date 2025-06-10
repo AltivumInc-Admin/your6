@@ -1,0 +1,175 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Your6: AI-Powered Veteran Support Mobilization System
+
+Globals:
+  Function:
+    Timeout: 60
+    Runtime: python3.11
+    Environment:
+      Variables:
+        DYNAMODB_TABLE: !Ref UsersTable
+        S3_BUCKET: !Ref CheckinsBucket
+        SNS_TOPIC_ARN: !Ref AlertTopic
+
+Resources:
+  # API Gateway
+  Your6Api:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: Your6-API
+      StageName: prod
+      Cors:
+        AllowMethods: "'POST, OPTIONS'"
+        AllowHeaders: "'Content-Type'"
+        AllowOrigin: "'*'"
+
+  # Lambda Functions
+  CheckinFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: Your6-CheckinProcessor
+      CodeUri: lambda/
+      Handler: handler.lambda_handler
+      Events:
+        CheckinApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Your6Api
+            Path: /check-in
+            Method: post
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsersTable
+        - S3CrudPolicy:
+            BucketName: !Ref CheckinsBucket
+        - Statement:
+            - Effect: Allow
+              Action:
+                - comprehend:DetectSentiment
+                - comprehend:DetectKeyPhrases
+              Resource: '*'
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource: '*'
+            - Effect: Allow
+              Action:
+                - transcribe:StartTranscriptionJob
+                - transcribe:GetTranscriptionJob
+              Resource: '*'
+            - Effect: Allow
+              Action:
+                - events:PutEvents
+              Resource: '*'
+
+  AlertDispatcherFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: Your6-AlertDispatcher
+      CodeUri: lambda/
+      Handler: alert_dispatcher.lambda_handler
+      Events:
+        LowSentimentRule:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source:
+                - your6.checkin
+              detail-type:
+                - Low Sentiment Alert
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref UsersTable
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt AlertTopic.TopicName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - sns:Publish
+              Resource: '*'
+
+  # DynamoDB Table
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: your6-users
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+  # S3 Bucket for Check-ins
+  CheckinsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'your6-checkins-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: TransitionOldCheckinsToIA
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 90
+                StorageClass: STANDARD_IA
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # SNS Topic for Alerts
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: Your6-TrustedContactAlerts
+      DisplayName: Your6 Alerts
+
+  # EventBridge Rule for Low Sentiment
+  LowSentimentEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: Your6-LowSentimentRule
+      Description: Triggers alert when sentiment is below threshold
+      EventPattern:
+        source:
+          - your6.checkin
+        detail-type:
+          - Low Sentiment Alert
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt AlertDispatcherFunction.Arn
+          Id: AlertDispatcherTarget
+
+  # Permissions for EventBridge to invoke Lambda
+  PermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AlertDispatcherFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt LowSentimentEventRule.Arn
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${Your6Api}.execute-api.${AWS::Region}.amazonaws.com/prod/check-in'
+  
+  UsersTableName:
+    Description: DynamoDB table name
+    Value: !Ref UsersTable
+  
+  CheckinsBucketName:
+    Description: S3 bucket for check-ins
+    Value: !Ref CheckinsBucket
+  
+  AlertTopicArn:
+    Description: SNS topic for alerts
+    Value: !Ref AlertTopic

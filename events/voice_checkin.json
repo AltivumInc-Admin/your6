@@ -1,0 +1,8 @@
+{
+  "body": "{\"userId\": \"veteran456\", \"voiceS3Uri\": \"s3://your6-checkins-205930636302/veteran456/voice/2024-06-10-audio.wav\"}",
+  "httpMethod": "POST",
+  "path": "/check-in",
+  "headers": {
+    "Content-Type": "application/json"
+  }
+}
