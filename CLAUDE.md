@@ -3,15 +3,19 @@
 ## Project Overview
 Your6 is an AI-powered veteran support mobilization system built for AWS Lambda Hackathon 2025. It transforms passive mental health monitoring into active support network mobilization.
 
-## Current Status (June 11, 2025 - Post Phase 3 Debug)
+## Current Status (June 11, 2025 - Critical Issues Identified)
 - ✅ Fully deployed to AWS us-east-1
 - ✅ API endpoint: https://3il8ifyfr7.execute-api.us-east-1.amazonaws.com/prod/check-in
 - ✅ Step Functions workflow deployed with Phase 3 multi-level routing
 - ✅ Crisis failsafe implemented and deployed (your6-lambda-phase3-failsafe.zip)
 - ✅ Dual notification system (SMS + Email) implemented
 - ✅ Operations SNS topic created for crisis alerts
-- ⚠️ SMS requires origination identity (toll-free number ordered but not activated)
+- ⚠️ SMS requires origination identity (toll-free number +18666216560 still PENDING)
 - ✅ Email notifications working (christian.perez0321@gmail.com)
+- ✅ Amazon Comprehend working perfectly (sentiment analysis confirmed)
+- ❌ Bedrock throttling due to 1 req/min limit on Claude 3.5 Sonnet
+- ❌ Risk score calculation failing (returns 0 for crisis scenarios)
+- ❌ Multi-model ensemble removed (unnecessary complexity)
 
 ## Key Components
 
@@ -94,10 +98,31 @@ aws stepfunctions list-executions --state-machine-arn arn:aws:states:us-east-1:2
 - Crisis text: risk_score = 95 → ImmediateIntervention ✓
 - Extreme crisis: Inconsistent (sometimes 0, sometimes 95)
 
-### Known Issues
-1. **Inconsistent Failsafe**: Crisis detection works ~70% of time
-2. **SMS Not Configured**: Toll-free number pending activation
-3. **Bedrock Throttling**: Causes fallback responses
+### Current Critical Issues (June 11, 2025 Update)
+
+#### 1. **Bedrock Throttling (Root Cause Identified)**
+- **Issue**: Getting ThrottlingException on every request
+- **Root Cause**: Multi-model ensemble was calling 3 Claude models simultaneously
+- **Math**: 3 models × 3 retries = 9 requests vs 1 request/minute limit
+- **Status**: Ensemble disabled, but still hitting 1 req/min limit with single model
+- **Solution**: Need to request limit increase OR switch to Claude Haiku (20 req/min)
+
+#### 2. **Risk Score Always Returns 0**
+- **Issue**: Crisis text like "gun + suicide" returns risk_score: 0
+- **Evidence**: Logs show risk calculated as 90, but API returns 0
+- **Impact**: Crisis scenarios route through CheckinComplete instead of CrisisProtocol
+- **Theory**: Value lost between calculation and response serialization
+
+#### 3. **SMS Still Pending**
+- **Number**: +18666216560
+- **Status**: PENDING (checked at 00:21 UTC)
+- **Type**: TRANSACTIONAL
+- **Expected**: 15 min to 72 hours for activation
+
+#### 4. **Step Functions Not Triggering**
+- **Last Run**: June 10, 23:41 UTC
+- **Issue**: Lambda completes but doesn't invoke Step Functions
+- **Impact**: No alert routing despite successful sentiment analysis
 
 ### Demo Video Script
 `/Users/christianperez/Desktop/your6/demo-video-script.md`
@@ -105,17 +130,64 @@ aws stepfunctions list-executions --state-machine-arn arn:aws:states:us-east-1:2
 ### GitHub
 Repository: https://github.com/AltivumInc-Admin/your6
 
-### Next Steps
-1. Monitor crisis failsafe consistency
-2. Activate SMS toll-free number
-3. Record demo video (<3 minutes)
-4. Submit to hackathon with working crisis detection
-5. Consider implementing continuous Lambda deployment to avoid caching issues
+### What's Working Well
+1. **Amazon Comprehend**: Sentiment analysis working perfectly
+   - Example: "gun + suicide" → NEGATIVE sentiment, -0.78 score
+   - Confirms NLP pipeline is solid
+2. **Fallback System**: When Bedrock throttles, system continues with pre-written responses
+3. **Alert Triggering**: alertTriggered: true for negative sentiment
+4. **Infrastructure**: All AWS services deployed and configured correctly
 
-### Key Learning
-The system was silently failing on crisis detection due to:
-- Missing IAM permissions causing advanced analysis to fail
-- Fallback path returning risk_score: 0
-- No visibility into the failure
+### Immediate Next Steps
+1. **Fix Risk Score Pipeline**
+   - Debug why risk_score calculated as 90 becomes 0 in response
+   - Check utils_enhanced.py response assembly
+   - Verify Step Functions integration
 
-Solution: Added comprehensive failsafes and logging throughout the pipeline.
+2. **Address Bedrock Throttling**
+   - Option A: Request limit increase via AWS Support (24-48 hours)
+   - Option B: Switch to Claude Haiku (20 req/min) or Instant (1000 req/min)
+   - Option C: Implement caching for common responses
+
+3. **Verify Step Functions**
+   - Check why Lambda isn't triggering Step Functions
+   - Verify IAM permissions for states:StartExecution
+   - Test direct Step Functions invocation
+
+4. **Complete SMS Setup**
+   - Check toll-free number status: `aws pinpoint-sms-voice-v2 describe-phone-numbers`
+   - Once active, SMS alerts will work automatically
+
+### Architecture Simplification
+- **Removed**: Multi-model ensemble (unnecessary complexity)
+- **Focus**: Robust failsafes over fancy AI features
+- **Principle**: One model, strong safety nets, clear alerts
+
+### Key Learnings
+
+#### From Phase 3 Debugging:
+1. **Silent Failures are Dangerous**: Risk calculation failed without alerts
+2. **Overengineering Hurts**: Multi-model ensemble created more problems than solutions
+3. **Simple is Reliable**: Comprehend + failsafes > complex AI orchestration
+
+#### From Today's Session:
+1. **Throttling Root Cause**: Ensemble multiplied requests by 3x
+2. **Risk Score Bug**: Calculated correctly (90) but lost in response pipeline
+3. **Step Functions Disconnect**: Lambda completes but doesn't trigger workflow
+
+### Testing Evidence
+```bash
+# Crisis text test
+Input: "I have my gun loaded and thinking about ending it all"
+Comprehend: ✅ NEGATIVE, -0.78 score
+Risk Calculation: ✅ 90 (in logs)
+API Response: ❌ risk_score: 0
+Step Functions: ❌ Not triggered
+Alert: ✅ alertTriggered: true
+```
+
+### Critical Path to Demo
+1. Fix risk_score pipeline (data flow issue)
+2. Ensure Step Functions triggers on high risk
+3. Use Claude Haiku to avoid throttling
+4. Record demo showing crisis → alert flow
