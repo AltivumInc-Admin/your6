@@ -1,0 +1,135 @@
+{
+    "TableName": "your6-users-enhanced",
+    "AttributeDefinitions": [
+        {
+            "AttributeName": "userId",
+            "AttributeType": "S"
+        },
+        {
+            "AttributeName": "lastCheckIn",
+            "AttributeType": "S"
+        }
+    ],
+    "KeySchema": [
+        {
+            "AttributeName": "userId",
+            "KeyType": "HASH"
+        }
+    ],
+    "GlobalSecondaryIndexes": [
+        {
+            "IndexName": "LastCheckInIndex",
+            "Keys": [
+                {
+                    "AttributeName": "lastCheckIn",
+                    "KeyType": "HASH"
+                }
+            ],
+            "Projection": {
+                "ProjectionType": "ALL"
+            },
+            "ProvisionedThroughput": {
+                "ReadCapacityUnits": 5,
+                "WriteCapacityUnits": 5
+            }
+        }
+    ],
+    "BillingMode": "PAY_PER_REQUEST",
+    "StreamSpecification": {
+        "StreamEnabled": true,
+        "StreamViewType": "NEW_AND_OLD_IMAGES"
+    },
+    "Tags": [
+        {
+            "Key": "Service",
+            "Value": "Your6"
+        },
+        {
+            "Key": "Phase",
+            "Value": "3"
+        }
+    ],
+    "UserProfileSchema": {
+        "userId": "string (PK)",
+        "profile": {
+            "preferred_name": "string",
+            "rank": "string",
+            "branch": "string",
+            "service_years": "number",
+            "deployment_count": "number",
+            "interests": ["string"],
+            "support_network": [
+                {
+                    "name": "string",
+                    "relationship": "string",
+                    "contact_info": "string"
+                }
+            ],
+            "effective_strategies": ["string"],
+            "triggers": ["string"],
+            "preferences": {
+                "communication_style": "string",
+                "response_length": "string",
+                "use_name": "boolean",
+                "include_memories": "boolean",
+                "check_in_frequency": "string"
+            }
+        },
+        "trustedContact": {
+            "name": "string",
+            "phone": "string",
+            "email": "string",
+            "preferredMethod": "string",
+            "relationship": "string"
+        },
+        "analytics": {
+            "baseline_sentiment": "number",
+            "baseline_check_in_hours": "number",
+            "avg_sentiment_30d": "number",
+            "total_check_ins": "number",
+            "last_positive_check_in": "string (ISO date)",
+            "response_effectiveness": "number"
+        },
+        "analysis_history": [
+            {
+                "timestamp": "string (ISO date)",
+                "sentiment": "string",
+                "sentiment_score": "number",
+                "risk_score": "number",
+                "risk_factors": ["string"],
+                "entities": ["object"],
+                "response_effectiveness": "number"
+            }
+        ],
+        "response_history": [
+            {
+                "timestamp": "string (ISO date)",
+                "model_used": "string",
+                "response": "string",
+                "user_feedback": "string",
+                "effectiveness_score": "number"
+            }
+        ],
+        "achievements": [
+            {
+                "date": "string",
+                "type": "string",
+                "description": "string"
+            }
+        ],
+        "risk_analysis": {
+            "current_risk_score": "number",
+            "risk_level": "string",
+            "trajectory": "string",
+            "last_analysis": "string (ISO date)",
+            "patterns_detected": ["string"],
+            "intervention_history": ["object"]
+        },
+        "lastCheckIn": "string (ISO date, GSI)",
+        "lastSentiment": "string",
+        "lastSentimentScore": "number",
+        "alertThreshold": "number",
+        "createdAt": "string (ISO date)",
+        "updatedAt": "string (ISO date)"
+    }
+}

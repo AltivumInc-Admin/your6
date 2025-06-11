@@ -10,6 +10,10 @@ from ai_logger import AIServiceLogger, MetricsCollector, AIServiceTimer
 from ai_retry import retry_with_backoff, CIRCUIT_BREAKERS
 from ai_validator import ResponseValidator, ValidationResult
 from ai_fallback import FallbackOrchestrator, FallbackType
+from ai_analyzer import AdvancedSentimentAnalyzer, EntityContextualizer
+from ai_personalizer import ResponsePersonalizer
+from ai_ensemble import MultiModelEnsemble
+from ai_predictor import PredictiveRiskAnalytics
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -28,6 +32,13 @@ cloudwatch = boto3.client('cloudwatch')
 metrics = MetricsCollector(cloudwatch)
 validator = ResponseValidator()
 fallback_orchestrator = FallbackOrchestrator(sns, cloudwatch)
+
+# Initialize Phase 3 components
+table = dynamodb.Table(TABLE_NAME)
+advanced_analyzer = AdvancedSentimentAnalyzer(comprehend, table)
+personalizer = ResponsePersonalizer(table)
+ensemble = MultiModelEnsemble(bedrock, validator, metrics)
+risk_predictor = PredictiveRiskAnalytics(table, sns, events)
 
 # Constants
 SENTIMENT_THRESHOLD = -0.6
@@ -79,6 +90,37 @@ def transcribe_audio(s3_uri: str, user_id: str) -> Optional[str]:
     except Exception as e:
         logger.error(f"Error transcribing audio: {str(e)}")
         return None
+
+def analyze_sentiment_advanced(text: str, user_id: str = "unknown") -> Dict[str, Any]:
+    """Advanced sentiment analysis with entity detection and risk scoring"""
+    try:
+        # Use advanced analyzer
+        analysis = advanced_analyzer.analyze_with_context(text, user_id)
+        
+        # Add entity context
+        entity_context = EntityContextualizer.contextualize(
+            analysis.get('entities', []),
+            text
+        )
+        analysis['entity_context'] = entity_context
+        
+        # Run predictive risk analysis
+        risk_analysis = risk_predictor.analyze_user_risk(user_id)
+        analysis['predictive_risk'] = risk_analysis
+        
+        return analysis
+        
+    except Exception as e:
+        logger.error(f"Advanced analysis failed, falling back: {str(e)}")
+        # Fall back to standard analysis
+        sentiment, score, phrases = analyze_sentiment(text, user_id)
+        return {
+            'sentiment': sentiment,
+            'sentiment_score': score,
+            'key_phrases': phrases,
+            'risk_score': 0,
+            'fallback_analysis': True
+        }
 
 def analyze_sentiment(text: str, user_id: str = "unknown") -> Tuple[str, float, list]:
     """Analyze sentiment and extract key phrases using Amazon Comprehend with retry logic."""
