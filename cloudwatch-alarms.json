@@ -1,0 +1,80 @@
+[
+    {
+        "AlarmName": "Your6-HighRiskFallback",
+        "AlarmDescription": "Alert when high-risk veteran check-in uses fallback response",
+        "MetricName": "HighRiskFallback",
+        "Namespace": "Your6/AI",
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "ActionsEnabled": true,
+        "AlarmActions": ["${OPS_SNS_TOPIC_ARN}"],
+        "Tags": [
+            {
+                "Key": "Service",
+                "Value": "Your6"
+            },
+            {
+                "Key": "Severity",
+                "Value": "Critical"
+            }
+        ]
+    },
+    {
+        "AlarmName": "Your6-BedrockCircuitOpen",
+        "AlarmDescription": "Bedrock circuit breaker is open - service degradation",
+        "MetricName": "FallbackUsage",
+        "Namespace": "Your6/AI",
+        "Dimensions": [
+            {
+                "Name": "Type",
+                "Value": "CIRCUIT_OPEN"
+            }
+        ],
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "ActionsEnabled": true,
+        "AlarmActions": ["${OPS_SNS_TOPIC_ARN}"]
+    },
+    {
+        "AlarmName": "Your6-FallbackRate",
+        "AlarmDescription": "High rate of fallback responses",
+        "MetricName": "FallbackUsage",
+        "Namespace": "Your6/AI",
+        "Statistic": "Average",
+        "Period": 300,
+        "EvaluationPeriods": 2,
+        "Threshold": 0.1,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching",
+        "ActionsEnabled": true,
+        "AlarmActions": ["${OPS_SNS_TOPIC_ARN}"]
+    },
+    {
+        "AlarmName": "Your6-BedrockLatency",
+        "AlarmDescription": "Bedrock response latency is high",
+        "MetricName": "Latency",
+        "Namespace": "Your6/AI",
+        "Dimensions": [
+            {
+                "Name": "Service",
+                "Value": "bedrock"
+            }
+        ],
+        "Statistic": "Average",
+        "Period": 300,
+        "EvaluationPeriods": 2,
+        "Threshold": 5000,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching",
+        "ActionsEnabled": true,
+        "AlarmActions": ["${OPS_SNS_TOPIC_ARN}"]
+    }
+]

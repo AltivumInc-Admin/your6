@@ -2,11 +2,14 @@ import boto3
 import json
 import os
 from datetime import datetime
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Any
 import logging
 from decimal import Decimal
 import time
 from ai_logger import AIServiceLogger, MetricsCollector, AIServiceTimer
+from ai_retry import retry_with_backoff, CIRCUIT_BREAKERS
+from ai_validator import ResponseValidator, ValidationResult
+from ai_fallback import FallbackOrchestrator, FallbackType
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -21,8 +24,10 @@ sns = boto3.client('sns')
 events = boto3.client('events')
 cloudwatch = boto3.client('cloudwatch')
 
-# Initialize metrics collector
+# Initialize metrics collector and validators
 metrics = MetricsCollector(cloudwatch)
+validator = ResponseValidator()
+fallback_orchestrator = FallbackOrchestrator(sns, cloudwatch)
 
 # Constants
 SENTIMENT_THRESHOLD = -0.6
@@ -76,7 +81,7 @@ def transcribe_audio(s3_uri: str, user_id: str) -> Optional[str]:
         return None
 
 def analyze_sentiment(text: str, user_id: str = "unknown") -> Tuple[str, float, list]:
-    """Analyze sentiment and extract key phrases using Amazon Comprehend with detailed logging."""
+    """Analyze sentiment and extract key phrases using Amazon Comprehend with retry logic."""
     # Start logging
     request_id = AIServiceLogger.log_request(
         service="comprehend",
@@ -87,11 +92,30 @@ def analyze_sentiment(text: str, user_id: str = "unknown") -> Tuple[str, float, 
     
     with AIServiceTimer() as timer:
         try:
-            # Sentiment analysis
-            sentiment_response = comprehend.detect_sentiment(
-                Text=text,
-                LanguageCode='en'
-            )
+            # Use circuit breaker
+            circuit_breaker = CIRCUIT_BREAKERS.get("comprehend")
+            
+            def comprehend_analysis():
+                # Sentiment analysis with retry
+                sentiment_result, retry_meta = retry_with_backoff(
+                    comprehend.detect_sentiment,
+                    "comprehend",
+                    Text=text,
+                    LanguageCode='en'
+                )
+                
+                # Key phrase extraction with retry
+                phrases_result, _ = retry_with_backoff(
+                    comprehend.detect_key_phrases,
+                    "comprehend",
+                    Text=text,
+                    LanguageCode='en'
+                )
+                
+                return sentiment_result, phrases_result, retry_meta
+            
+            # Execute with circuit breaker
+            sentiment_response, key_phrases_response, retry_metadata = circuit_breaker.call(comprehend_analysis)
             
             sentiment = sentiment_response['Sentiment']
             all_scores = sentiment_response['SentimentScore']
@@ -106,12 +130,6 @@ def analyze_sentiment(text: str, user_id: str = "unknown") -> Tuple[str, float, 
             # Calculate confidence
             confidence = max(all_scores.values())
             
-            # Key phrase extraction
-            key_phrases_response = comprehend.detect_key_phrases(
-                Text=text,
-                LanguageCode='en'
-            )
-            
             key_phrases = [phrase['Text'] for phrase in key_phrases_response['KeyPhrases']]
             
             # Log successful response
@@ -122,7 +140,8 @@ def analyze_sentiment(text: str, user_id: str = "unknown") -> Tuple[str, float, 
                 output_data={
                     "sentiment_score": sentiment_score,
                     "confidence": confidence,
-                    "key_phrases_count": len(key_phrases)
+                    "key_phrases_count": len(key_phrases),
+                    "retry_attempts": retry_metadata.get("attempts", 1)
                 },
                 latency_ms=timer.elapsed_ms
             )
@@ -151,14 +170,14 @@ def analyze_sentiment(text: str, user_id: str = "unknown") -> Tuple[str, float, 
             )
             
             metrics.record_error("comprehend", error_type)
-            logger.error(f"Error analyzing sentiment: {str(e)}")
+            logger.error(f"Error analyzing sentiment after retries: {str(e)}")
             
             # Return neutral fallback
             metrics.record_fallback("sentiment_analysis", "comprehend_error")
             return 'NEUTRAL', 0.0, []
 
 def generate_ai_response(text: str, sentiment: str, user_id: str, sentiment_score: float = 0.0) -> Dict[str, Any]:
-    """Generate supportive response using Amazon Bedrock with comprehensive logging."""
+    """Generate supportive response using Amazon Bedrock with retry logic and validation."""
     # Start logging
     request_id = AIServiceLogger.log_request(
         service="bedrock",
@@ -167,53 +186,88 @@ def generate_ai_response(text: str, sentiment: str, user_id: str, sentiment_scor
         input_data={"text": text, "model": "claude-3.5-sonnet"}
     )
     
+    # Prepare sentiment data for validation
+    sentiment_data = {
+        "dominant": sentiment,
+        "sentiment_score": sentiment_score,
+        "key_phrases": []  # Will be populated if needed
+    }
+    
     with AIServiceTimer() as timer:
         try:
-            # Load system prompt from file or use default
-            try:
-                with open('/opt/bedrock_system_prompt.txt', 'r') as f:
-                    system_prompt = f.read()
-            except:
-                system_prompt = """You are a supportive AI assistant specifically designed to help veterans. 
-                Your responses should be:
-                - Empathetic and understanding
-                - Non-clinical and conversational
-                - Action-oriented when appropriate
-                - Respectful of military culture
-                - Brief but meaningful (2-3 sentences)
-                
-                Never provide medical advice or diagnose conditions."""
+            # Load system prompt
+            system_prompt = """You are a supportive AI assistant specifically designed to help veterans. 
+            Your responses should be:
+            - Empathetic and understanding
+            - Non-clinical and conversational
+            - Action-oriented when appropriate
+            - Respectful of military culture
+            - Brief but meaningful (2-3 sentences)
             
-            # Construct the prompt
-            prompt = f"""System: {system_prompt}
+            Never provide medical advice or diagnose conditions.
+            For negative sentiment, always include the Veterans Crisis Line: 1-800-273-8255 (press 1)."""
+            
+            # Use circuit breaker
+            circuit_breaker = CIRCUIT_BREAKERS.get("bedrock")
+            
+            def invoke_bedrock_with_retry():
+                # Construct the prompt
+                prompt = f"""System: {system_prompt}
 
 User (Veteran {user_id}) shared: "{text}"
-Detected sentiment: {sentiment}
+Detected sentiment: {sentiment} (score: {sentiment_score:.2f})
 
 Provide a brief, supportive response that acknowledges their feelings and offers encouragement."""
-
-            # Call Bedrock (Claude 3.5 Sonnet)
-            logger.info(f"Invoking Bedrock Claude 3.5 for user {user_id}")
+                
+                # Call Bedrock with retry
+                response, retry_metadata = retry_with_backoff(
+                    bedrock.invoke_model,
+                    "bedrock",
+                    modelId='anthropic.claude-3-5-sonnet-20240620-v1:0',
+                    contentType='application/json',
+                    accept='application/json',
+                    body=json.dumps({
+                        'anthropic_version': 'bedrock-2023-05-31',
+                        'max_tokens': 300,
+                        'temperature': 0.7,
+                        'messages': [{
+                            'role': 'user',
+                            'content': prompt
+                        }]
+                    })
+                )
+                
+                return response, retry_metadata
             
-            response = bedrock.invoke_model(
-                modelId='anthropic.claude-3-5-sonnet-20240620-v1:0',
-                contentType='application/json',
-                accept='application/json',
-                body=json.dumps({
-                    'anthropic_version': 'bedrock-2023-05-31',
-                    'max_tokens': 300,
-                    'temperature': 0.7,
-                    'messages': [{
-                        'role': 'user',
-                        'content': prompt
-                    }]
-                })
-            )
+            # Execute with circuit breaker
+            response, retry_metadata = circuit_breaker.call(invoke_bedrock_with_retry)
             
             response_body = json.loads(response['body'].read())
             ai_text = response_body['content'][0]['text']
             usage = response_body.get('usage', {})
             tokens_used = usage.get('total_tokens', 0)
+            
+            # Validate response
+            validation_result = validator.validate_response(ai_text, sentiment_data)
+            
+            if not validation_result.is_valid:
+                logger.warning(f"Response validation failed: {validation_result.failed_checks}")
+                
+                # Attempt regeneration once
+                if "has_resources" in validation_result.failed_checks and sentiment == "NEGATIVE":
+                    # Add crisis line if missing
+                    ai_text += f"\n\nRemember, support is available 24/7: Veterans Crisis Line 1-800-273-8255 (press 1)."
+                    validation_result = validator.validate_response(ai_text, sentiment_data)
+                
+                # If still invalid, use fallback
+                if not validation_result.is_valid:
+                    context = {
+                        "user_id": user_id,
+                        "sentiment_score": sentiment_score,
+                        "error_type": "validation_failed",
+                        "validation_errors": validation_result.failed_checks
+                    }
+                    return fallback_orchestrator.handle_fallback("validation_failed", context)
             
             # Log successful response
             AIServiceLogger.log_response(
@@ -224,7 +278,9 @@ Provide a brief, supportive response that acknowledges their feelings and offers
                     "response": ai_text,
                     "response_length": len(ai_text),
                     "tokens_used": tokens_used,
-                    "sentiment_score": sentiment_score
+                    "sentiment_score": sentiment_score,
+                    "validation_score": validation_result.score,
+                    "retry_attempts": retry_metadata.get("attempts", 1)
                 },
                 latency_ms=timer.elapsed_ms
             )
@@ -234,7 +290,7 @@ Provide a brief, supportive response that acknowledges their feelings and offers
             if tokens_used > 0:
                 metrics.record_token_usage("claude-3.5-sonnet", tokens_used)
             
-            logger.info(f"Bedrock response generated: {len(ai_text)} chars, {tokens_used} tokens, {timer.elapsed_ms:.1f}ms")
+            logger.info(f"Bedrock response validated: score={validation_result.score:.2f}, {len(ai_text)} chars")
             
             return {
                 "response": ai_text,
@@ -243,6 +299,8 @@ Provide a brief, supportive response that acknowledges their feelings and offers
                     "request_id": request_id,
                     "tokens_used": tokens_used,
                     "latency_ms": timer.elapsed_ms,
+                    "validation_score": validation_result.score,
+                    "retry_attempts": retry_metadata.get("attempts", 1),
                     "fallback": False
                 }
             }
@@ -264,34 +322,25 @@ Provide a brief, supportive response that acknowledges their feelings and offers
             )
             
             metrics.record_error("bedrock", error_type)
-            logger.error(f"Bedrock error: {error_type} - {error_message}")
+            logger.error(f"Bedrock error after retries: {error_type} - {error_message}")
             
-            # Log fallback usage
-            fallback_reason = "bedrock_error"
-            AIServiceLogger.log_fallback(
-                reason=fallback_reason,
-                user_id=user_id,
-                context={
-                    "sentiment_score": sentiment_score,
-                    "error_type": error_type,
-                    "fallback_type": "SYSTEM_FALLBACK_BEDROCK_ERROR"
-                }
-            )
+            # Determine fallback type
+            if "Circuit breaker is open" in str(e):
+                fallback_type = "circuit_open"
+            elif "retry" in error_message.lower():
+                fallback_type = "retry_exhausted"
+            else:
+                fallback_type = "bedrock_error"
             
-            metrics.record_fallback("bedrock_response", fallback_reason)
-            
-            # Return fallback with clear indicator
-            return {
-                "response": "I hear you and want to provide the support you deserve. While I'm experiencing technical difficulties, please know that your check-in has been received and your trusted contact will be notified if needed. You're not alone. [SYSTEM_FALLBACK_BEDROCK_ERROR]",
-                "metadata": {
-                    "model": "none",
-                    "request_id": request_id,
-                    "error": error_type,
-                    "latency_ms": timer.elapsed_ms,
-                    "fallback": True,
-                    "fallback_type": "SYSTEM_FALLBACK_BEDROCK_ERROR"
-                }
+            # Use orchestrated fallback
+            context = {
+                "user_id": user_id,
+                "sentiment_score": sentiment_score,
+                "error_type": error_type,
+                "request_id": request_id
             }
+            
+            return fallback_orchestrator.handle_fallback(fallback_type, context)
 
 def store_checkin(user_id: str, text: str, sentiment: str, sentiment_score: float, 
                   ai_response: str, key_phrases: list) -> bool:
