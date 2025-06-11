@@ -225,3 +225,12 @@ MIT License
 ---
 
 For questions or collaboration inquiries, reach out via GitHub Issues or christian.perez@altivum.io.
+
+# In Memory
+
+For Dave Troutman, Andrew Manelski, and Moses Shin.
+
+DOL.
+
+And for all those who served and struggled in silence.
+You are not forgotten.
