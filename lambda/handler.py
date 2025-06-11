@@ -4,11 +4,10 @@ from typing import Dict
 from utils import (
     get_user_data,
     transcribe_audio,
-    analyze_sentiment,
-    generate_ai_response,
-    store_checkin,
-    trigger_alert,
     SENTIMENT_THRESHOLD
+)
+from utils_enhanced import (
+    process_check_in_enhanced
 )
 
 logger = logging.getLogger()
@@ -74,54 +73,21 @@ def lambda_handler(event: Dict, context) -> Dict:
         
         logger.info(f"Processing check-in for user {user_id}: {text[:50]}...")
         
-        # Analyze sentiment
-        sentiment, sentiment_score, key_phrases = analyze_sentiment(text, user_id)
-        logger.info(f"Sentiment analysis: {sentiment} ({sentiment_score})")
+        # Use enhanced processing with Phase 3 features
+        response_data = process_check_in_enhanced(user_id, text)
         
-        # Generate AI response
-        ai_response_data = generate_ai_response(text, sentiment, user_id, sentiment_score)
-        ai_response = ai_response_data["response"]
-        ai_metadata = ai_response_data.get("metadata", {})
+        # Add additional fields for compatibility
+        response_data['userId'] = user_id
+        response_data['text'] = text[:200]  # Include preview for Step Functions
         
-        # Store check-in data
-        stored = store_checkin(
-            user_id=user_id,
-            text=text,
-            sentiment=sentiment,
-            sentiment_score=sentiment_score,
-            ai_response=ai_response,
-            key_phrases=key_phrases
-        )
-        
-        if not stored:
-            logger.error("Failed to store check-in data")
-        
-        # Check if we need to trigger an alert
-        alert_triggered = False
-        if sentiment_score < SENTIMENT_THRESHOLD:
-            logger.warning(f"Low sentiment detected for user {user_id}: {sentiment_score}")
-            
-            # Only trigger alert if user has a trusted contact configured
-            if user_data and user_data.get('trustedContact'):
-                alert_triggered = trigger_alert(user_id, sentiment_score, text)
-                if alert_triggered:
-                    logger.info(f"Alert triggered for user {user_id}")
-                else:
-                    logger.error(f"Failed to trigger alert for user {user_id}")
-            else:
-                logger.info(f"No trusted contact configured for user {user_id}, skipping alert")
-        
-        # Prepare response
-        response_data = {
-            'response': ai_response,
-            'sentiment': sentiment,
-            'score': sentiment_score,
-            'entities': key_phrases[:5],  # Limit to top 5 phrases
-            'userId': user_id,
-            'text': text[:200],  # Include preview for Step Functions
-            'alertTriggered': alert_triggered,
-            'aiMetadata': ai_metadata  # Include AI metadata for monitoring
-        }
+        # Log Phase 3 features
+        if response_data.get('risk_score', 0) > 0:
+            logger.info(f"Risk analysis: score={response_data['risk_score']}, trajectory={response_data.get('trajectory', 'unknown')}")
+        if 'aiMetadata' in response_data:
+            if response_data['aiMetadata'].get('phase3_enhanced'):
+                logger.info("Phase 3 enhanced features active")
+            if response_data['aiMetadata'].get('ensemble_used'):
+                logger.info(f"Ensemble response generated with {len(response_data['aiMetadata'].get('models_used', []))} models")
         
         # Return appropriate format
         if from_api_gateway:

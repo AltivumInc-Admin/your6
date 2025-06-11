@@ -1,0 +1,240 @@
+{
+  "Comment": "Your6 Enhanced Check-in Workflow with Phase 3 AI Features",
+  "StartAt": "ProcessCheckin",
+  "States": {
+    "ProcessCheckin": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:us-east-1:205930636302:function:Your6-CheckinProcessor",
+      "Comment": "Process check-in with Phase 3 enhanced AI analysis",
+      "ResultPath": "$.checkinResult",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleCheckinFailure",
+          "ResultPath": "$.error"
+        }
+      ],
+      "Next": "EvaluateRisk"
+    },
+    "EvaluateRisk": {
+      "Type": "Choice",
+      "Comment": "Evaluate both sentiment and risk scores",
+      "Choices": [
+        {
+          "And": [
+            {
+              "Variable": "$.checkinResult.risk_score",
+              "NumericGreaterThan": 95
+            }
+          ],
+          "Next": "CrisisProtocol"
+        },
+        {
+          "And": [
+            {
+              "Variable": "$.checkinResult.risk_score",
+              "NumericGreaterThan": 85
+            }
+          ],
+          "Next": "ImmediateIntervention"
+        },
+        {
+          "Or": [
+            {
+              "Variable": "$.checkinResult.score",
+              "NumericLessThan": -0.6
+            },
+            {
+              "Variable": "$.checkinResult.risk_score",
+              "NumericGreaterThan": 50
+            }
+          ],
+          "Next": "StandardAlert"
+        },
+        {
+          "And": [
+            {
+              "Variable": "$.checkinResult.trajectory",
+              "StringEquals": "declining"
+            },
+            {
+              "Variable": "$.checkinResult.risk_score",
+              "NumericGreaterThan": 30
+            }
+          ],
+          "Next": "ProactiveOutreach"
+        }
+      ],
+      "Default": "CheckinComplete"
+    },
+    "CrisisProtocol": {
+      "Type": "Parallel",
+      "Comment": "Execute crisis protocol with immediate multi-channel alerts",
+      "ResultPath": "$.crisisResponse",
+      "Branches": [
+        {
+          "StartAt": "AlertTrustedContact",
+          "States": {
+            "AlertTrustedContact": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::events:putEvents",
+              "Parameters": {
+                "Entries": [
+                  {
+                    "Source": "your6.checkin.crisis",
+                    "DetailType": "Crisis Protocol Alert",
+                    "Detail.$": "States.JsonToString($.checkinResult)"
+                  }
+                ]
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "NotifyOperations",
+          "States": {
+            "NotifyOperations": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::sns:publish",
+              "Parameters": {
+                "TopicArn": "arn:aws:sns:us-east-1:205930636302:Your6-OperationsAlerts",
+                "Subject": "URGENT: Your6 Crisis Protocol Activated",
+                "Message.$": "States.Format('Crisis protocol activated for user {} with risk score {}. Immediate intervention required.', $.checkinResult.userId, $.checkinResult.risk_score)"
+              },
+              "End": true
+            }
+          }
+        }
+      ],
+      "Next": "LogCrisisIntervention"
+    },
+    "ImmediateIntervention": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::events:putEvents",
+      "Comment": "High-risk situation requiring immediate attention",
+      "Parameters": {
+        "Entries": [
+          {
+            "Source": "your6.checkin.highrisk",
+            "DetailType": "Immediate Intervention Required",
+            "Detail.$": "States.JsonToString($.checkinResult)"
+          }
+        ]
+      },
+      "ResultPath": "$.alertResult",
+      "Next": "CheckinComplete"
+    },
+    "StandardAlert": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::events:putEvents",
+      "Comment": "Standard alert for moderate risk or low sentiment",
+      "Parameters": {
+        "Entries": [
+          {
+            "Source": "your6.checkin",
+            "DetailType": "Low Sentiment Alert",
+            "Detail": {
+              "userId.$": "$.checkinResult.userId",
+              "sentimentScore.$": "$.checkinResult.score",
+              "riskScore.$": "$.checkinResult.risk_score",
+              "textPreview.$": "$.checkinResult.text",
+              "alertType": "STANDARD"
+            }
+          }
+        ]
+      },
+      "ResultPath": "$.alertResult",
+      "Next": "CheckinComplete"
+    },
+    "ProactiveOutreach": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::events:putEvents",
+      "Comment": "Proactive intervention based on declining trajectory",
+      "Parameters": {
+        "Entries": [
+          {
+            "Source": "your6.checkin.proactive",
+            "DetailType": "Proactive Outreach Recommended",
+            "Detail.$": "States.JsonToString($.checkinResult)"
+          }
+        ]
+      },
+      "ResultPath": "$.proactiveResult",
+      "Next": "CheckinComplete"
+    },
+    "LogCrisisIntervention": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Comment": "Log crisis intervention to user record",
+      "Parameters": {
+        "TableName": "your6-users",
+        "Key": {
+          "userId": {
+            "S.$": "$.checkinResult.userId"
+          }
+        },
+        "UpdateExpression": "SET lastCrisisIntervention = :timestamp, crisisInterventionCount = if_not_exists(crisisInterventionCount, :zero) + :one",
+        "ExpressionAttributeValues": {
+          ":timestamp": {
+            "S.$": "$$.State.EnteredTime"
+          },
+          ":zero": {
+            "N": "0"
+          },
+          ":one": {
+            "N": "1"
+          }
+        }
+      },
+      "ResultPath": "$.logResult",
+      "Next": "CheckinComplete"
+    },
+    "CheckinComplete": {
+      "Type": "Pass",
+      "Comment": "Check-in processed successfully with Phase 3 enhancements",
+      "Result": "Check-in complete",
+      "Parameters": {
+        "status": "success",
+        "userId.$": "$.checkinResult.userId",
+        "sentiment.$": "$.checkinResult.sentiment",
+        "sentimentScore.$": "$.checkinResult.score",
+        "riskScore.$": "$.checkinResult.risk_score",
+        "trajectory.$": "$.checkinResult.trajectory",
+        "alertTriggered.$": "$.checkinResult.alertTriggered",
+        "ensembleUsed.$": "$.checkinResult.aiMetadata.ensemble_used",
+        "phase3Enhanced.$": "$.checkinResult.aiMetadata.phase3_enhanced"
+      },
+      "End": true
+    },
+    "HandleCheckinFailure": {
+      "Type": "Pass",
+      "Comment": "Handle Lambda execution failure",
+      "Result": "Check-in failed",
+      "Next": "NotifyFailure"
+    },
+    "NotifyFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:205930636302:Your6-TrustedContactAlerts",
+        "Subject": "Your6 Check-in Processing Failed",
+        "Message.$": "States.Format('Check-in processing failed for user. Error: {}', $.error.Cause)"
+      },
+      "Next": "WorkflowFailed"
+    },
+    "WorkflowFailed": {
+      "Type": "Fail",
+      "Error": "CheckinProcessingFailed",
+      "Cause": "The check-in could not be processed due to an error"
+    }
+  }
+}

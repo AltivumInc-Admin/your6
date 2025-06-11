@@ -1,0 +1,100 @@
+{
+  "risk_calculation": {
+    "passed": true,
+    "results": [
+      {
+        "text": "I have my gun and I'm thinking about ending it all...",
+        "risk_score": 90.0,
+        "risk_factors": [
+          "end\\s+it|ending\\s+it|done\\s+with\\s+life|no\\s+point",
+          "gun|weapon|pills|rope|bridge"
+        ],
+        "passed": true
+      },
+      {
+        "text": "Feeling hopeless and worthless, can't go on...",
+        "risk_score": 35.0,
+        "risk_factors": [
+          "urden|worthless|hopeless|trapped"
+        ],
+        "passed": true
+      },
+      {
+        "text": "Had a good day today, feeling optimistic...",
+        "risk_score": 0,
+        "risk_factors": [],
+        "passed": true
+      }
+    ]
+  },
+  "entity_detection": {
+    "passed": true,
+    "results": [
+      {
+        "text": "I have my gun right here",
+        "entities": [
+          {
+            "Type": "OTHER",
+            "Text": "gun",
+            "Score": 0.9
+          }
+        ]
+      },
+      {
+        "text": "Meeting John at the VA hospital tomorrow",
+        "entities": []
+      },
+      {
+        "text": "Been drinking since 3pm",
+        "entities": []
+      }
+    ]
+  },
+  "integration_flow": {
+    "passed": false,
+    "results": {
+      "sentiment": "NEUTRAL",
+      "score": 0.6,
+      "phrases": []
+    }
+  },
+  "crisis_detection": {
+    "passed": true,
+    "results": [
+      {
+        "text": "I can't do this anymore. I have my gun and I'm goi...",
+        "risk_score": 90.0,
+        "risk_factors": [
+          "end\\s+it|ending\\s+it|done\\s+with\\s+life|no\\s+point",
+          "gun|weapon|pills|rope|bridge"
+        ],
+        "passed": true
+      },
+      {
+        "text": "Planning to take all my pills tonight. No one will...",
+        "risk_score": 40.0,
+        "risk_factors": [
+          "gun|weapon|pills|rope|bridge"
+        ],
+        "passed": true
+      },
+      {
+        "text": "Standing on the bridge. This is goodbye....",
+        "risk_score": 85.0,
+        "risk_factors": [
+          "gun|weapon|pills|rope|bridge",
+          "goodbye|farewell|this\\s+is\\s+it|final\\s+message"
+        ],
+        "passed": true
+      },
+      {
+        "text": "Cut myself again. Deeper this time. Want the pain ...",
+        "risk_score": 40.0,
+        "risk_factors": [
+          "overdose|OD|cut\\s+myself|cutting"
+        ],
+        "passed": true
+      }
+    ]
+  }
+}

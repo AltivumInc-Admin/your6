@@ -28,6 +28,14 @@ sns = boto3.client('sns')
 events = boto3.client('events')
 cloudwatch = boto3.client('cloudwatch')
 
+# Constants
+SENTIMENT_THRESHOLD = -0.6
+VA_CRISIS_LINE = "1-800-273-8255 (press 1)"
+VA_CRISIS_URL = "https://www.veteranscrisisline.net"
+TABLE_NAME = os.environ.get('DYNAMODB_TABLE', 'your6-users')
+BUCKET_NAME = os.environ.get('S3_BUCKET', 'your6-checkins')
+SNS_TOPIC_ARN = os.environ.get('SNS_TOPIC_ARN', '')
+
 # Initialize metrics collector and validators
 metrics = MetricsCollector(cloudwatch)
 validator = ResponseValidator()
@@ -39,14 +47,6 @@ advanced_analyzer = AdvancedSentimentAnalyzer(comprehend, table)
 personalizer = ResponsePersonalizer(table)
 ensemble = MultiModelEnsemble(bedrock, validator, metrics)
 risk_predictor = PredictiveRiskAnalytics(table, sns, events)
-
-# Constants
-SENTIMENT_THRESHOLD = -0.6
-VA_CRISIS_LINE = "1-800-273-8255 (press 1)"
-VA_CRISIS_URL = "https://www.veteranscrisisline.net"
-TABLE_NAME = os.environ.get('DYNAMODB_TABLE', 'your6-users')
-BUCKET_NAME = os.environ.get('S3_BUCKET', 'your6-checkins')
-SNS_TOPIC_ARN = os.environ.get('SNS_TOPIC_ARN', '')
 
 def get_user_data(user_id: str) -> Optional[Dict]:
     """Fetch user data including trusted contact info from DynamoDB."""
@@ -114,12 +114,29 @@ def analyze_sentiment_advanced(text: str, user_id: str = "unknown") -> Dict[str,
         logger.error(f"Advanced analysis failed, falling back: {str(e)}")
         # Fall back to standard analysis
         sentiment, score, phrases = analyze_sentiment(text, user_id)
+        
+        # Apply basic risk detection for fallback
+        risk_score = 0
+        if sentiment == 'NEGATIVE' and score < -0.8:
+            # Check for crisis keywords
+            crisis_words = ['gun', 'suicide', 'kill myself', 'end it', 'pills', 'jump']
+            text_lower = text.lower()
+            for word in crisis_words:
+                if word in text_lower:
+                    risk_score = 95
+                    logger.critical(f"FALLBACK CRISIS DETECTION: Found '{word}' in text with negative sentiment")
+                    break
+            
+            if risk_score == 0 and score < -0.9:
+                risk_score = 60  # High risk for extreme negative sentiment
+        
         return {
             'sentiment': sentiment,
             'sentiment_score': score,
             'key_phrases': phrases,
-            'risk_score': 0,
-            'fallback_analysis': True
+            'risk_score': risk_score,
+            'fallback_analysis': True,
+            'fallback_crisis_check': risk_score > 0
         }
 
 def analyze_sentiment(text: str, user_id: str = "unknown") -> Tuple[str, float, list]:

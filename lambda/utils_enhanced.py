@@ -1,5 +1,29 @@
 # Enhanced utility functions for Phase 3
 from typing import Dict, Any, Optional
+import json
+import os
+from datetime import datetime
+from decimal import Decimal
+import logging
+import boto3
+
+# Import from existing utils
+from utils import (
+    analyze_sentiment_advanced,
+    generate_ai_response,
+    SENTIMENT_THRESHOLD,
+    archive_to_s3,
+    trigger_alert,
+    logger,
+    dynamodb,
+    events,
+    sns,
+    table,
+    personalizer,
+    ensemble,
+    risk_predictor,
+    TABLE_NAME
+)
 
 def generate_ai_response_enhanced(text: str, 
                                 sentiment_data: Dict,

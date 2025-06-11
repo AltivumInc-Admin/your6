@@ -68,6 +68,7 @@ resource "aws_dynamodb_table" "users" {
   tags = {
     Name        = "your6-users"
     Environment = var.environment
+    Phase       = "3"
   }
 }
 
@@ -111,7 +112,7 @@ resource "aws_s3_bucket_public_access_block" "checkins" {
   restrict_public_buckets = true
 }
 
-# SNS Topic
+# SNS Topics
 resource "aws_sns_topic" "alerts" {
   name         = "Your6-TrustedContactAlerts"
   display_name = "Your6 Alerts"
@@ -120,6 +121,24 @@ resource "aws_sns_topic" "alerts" {
     Name        = "Your6-TrustedContactAlerts"
     Environment = var.environment
   }
+}
+
+resource "aws_sns_topic" "operations_alerts" {
+  name         = "Your6-OperationsAlerts"
+  display_name = "Your6 Operations Alerts"
+
+  tags = {
+    Name        = "Your6-OperationsAlerts"
+    Environment = var.environment
+    Purpose     = "Crisis and high-risk alerts"
+  }
+}
+
+# SNS Subscriptions
+resource "aws_sns_topic_subscription" "operations_email" {
+  topic_arn = aws_sns_topic.operations_alerts.arn
+  protocol  = "email"
+  endpoint  = "christian.perez0321@gmail.com"
 }
 
 # IAM Roles
@@ -175,12 +194,57 @@ resource "aws_iam_role_policy" "lambda_policy" {
         Action = [
           "comprehend:DetectSentiment",
           "comprehend:DetectKeyPhrases",
-          "bedrock:InvokeModel",
+          "comprehend:DetectEntities",
+          "comprehend:DetectSyntax"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "bedrock:InvokeModel"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
           "transcribe:StartTranscriptionJob",
-          "transcribe:GetTranscriptionJob",
-          "events:PutEvents",
-          "sns:Publish",
+          "transcribe:GetTranscriptionJob"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "events:PutEvents"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "sns:Publish"
+        ]
+        Resource = [
+          aws_sns_topic.alerts.arn,
+          aws_sns_topic.operations_alerts.arn
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
           "sqs:SendMessage"
+        ]
+        Resource = [
+          aws_sqs_queue.checkin_dlq.arn,
+          aws_sqs_queue.alert_dlq.arn
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "cloudwatch:PutMetricData"
         ]
         Resource = "*"
       },
@@ -242,7 +306,17 @@ resource "aws_iam_role_policy" "stepfunctions_policy" {
         Action = [
           "sns:Publish"
         ]
-        Resource = aws_sns_topic.alerts.arn
+        Resource = [
+          aws_sns_topic.alerts.arn,
+          aws_sns_topic.operations_alerts.arn
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:UpdateItem"
+        ]
+        Resource = aws_dynamodb_table.users.arn
       }
     ]
   })
@@ -250,13 +324,13 @@ resource "aws_iam_role_policy" "stepfunctions_policy" {
 
 # Lambda Functions
 resource "aws_lambda_function" "checkin" {
-  filename         = "${path.module}/../lambda-package-v2.zip"
+  filename         = "${path.module}/../your6-lambda-phase3-failsafe.zip"
   function_name    = "Your6-CheckinProcessor"
   role            = aws_iam_role.lambda_execution.arn
   handler         = "handler.lambda_handler"
   runtime         = "python3.11"
-  timeout         = 60
-  memory_size     = 256
+  timeout         = 120
+  memory_size     = 512
   reserved_concurrent_executions = 100
 
   dead_letter_config {
@@ -268,6 +342,7 @@ resource "aws_lambda_function" "checkin" {
       DYNAMODB_TABLE    = aws_dynamodb_table.users.name
       S3_BUCKET        = aws_s3_bucket.checkins.id
       SNS_TOPIC_ARN    = aws_sns_topic.alerts.arn
+      OPS_SNS_TOPIC_ARN = aws_sns_topic.operations_alerts.arn
       STATE_MACHINE_ARN = aws_sfn_state_machine.your6_workflow.arn
     }
   }
@@ -275,11 +350,12 @@ resource "aws_lambda_function" "checkin" {
   tags = {
     Name        = "Your6-CheckinProcessor"
     Environment = var.environment
+    Phase       = "3"
   }
 }
 
 resource "aws_lambda_function" "alert_dispatcher" {
-  filename         = "${path.module}/../lambda-package-v2.zip"
+  filename         = "${path.module}/../your6-lambda-phase3-failsafe.zip"
   function_name    = "Your6-AlertDispatcher"
   role            = aws_iam_role.lambda_execution.arn
   handler         = "alert_dispatcher.lambda_handler"
@@ -306,94 +382,17 @@ resource "aws_lambda_function" "alert_dispatcher" {
   }
 }
 
-# Step Functions State Machine
+# Step Functions State Machine with Phase 3 Definition
 resource "aws_sfn_state_machine" "your6_workflow" {
   name     = "Your6-CheckinWorkflow"
   role_arn = aws_iam_role.stepfunctions.arn
 
-  definition = jsonencode({
-    Comment = "Your6 Check-in Processing Workflow"
-    StartAt = "ProcessCheckin"
-    States = {
-      ProcessCheckin = {
-        Type     = "Task"
-        Resource = aws_lambda_function.checkin.arn
-        Retry = [
-          {
-            ErrorEquals     = ["States.TaskFailed"]
-            IntervalSeconds = 2
-            MaxAttempts     = 3
-            BackoffRate     = 2
-          }
-        ]
-        Catch = [
-          {
-            ErrorEquals = ["States.ALL"]
-            Next        = "HandleCheckinFailure"
-          }
-        ]
-        Next = "CheckSentiment"
-      }
-      CheckSentiment = {
-        Type = "Choice"
-        Choices = [
-          {
-            Variable      = "$.sentimentScore"
-            NumericLessThan = -0.6
-            Next          = "TriggerAlert"
-          }
-        ]
-        Default = "CheckinComplete"
-      }
-      TriggerAlert = {
-        Type     = "Task"
-        Resource = "arn:aws:states:::events:putEvents"
-        Parameters = {
-          Entries = [
-            {
-              Source     = "your6.checkin"
-              DetailType = "Low Sentiment Alert"
-              Detail = {
-                "userId.$"        = "$.userId"
-                "sentimentScore.$" = "$.sentimentScore"
-                "textPreview.$"   = "$.textPreview"
-                "timestamp.$"     = "$.timestamp"
-              }
-            }
-          ]
-        }
-        Next = "CheckinComplete"
-      }
-      HandleCheckinFailure = {
-        Type = "Pass"
-        Result = {
-          status  = "failed"
-          message = "Check-in processing failed"
-        }
-        Next = "NotifyFailure"
-      }
-      NotifyFailure = {
-        Type     = "Task"
-        Resource = "arn:aws:states:::sns:publish"
-        Parameters = {
-          TopicArn  = aws_sns_topic.alerts.arn
-          Subject   = "Your6 Check-in Processing Failed"
-          "Message.$" = "$.error"
-        }
-        Next = "WorkflowFailed"
-      }
-      CheckinComplete = {
-        Type = "Succeed"
-      }
-      WorkflowFailed = {
-        Type = "Fail"
-      }
-    }
-  })
+  definition = file("${path.module}/../stepfunctions-phase3-definition.json")
 
   tags = {
     Name        = "Your6-CheckinWorkflow"
     Environment = var.environment
+    Phase       = "3"
   }
 }
 
@@ -443,7 +442,7 @@ resource "aws_api_gateway_deployment" "your6" {
   stage_name  = var.environment
 }
 
-# EventBridge Rule
+# EventBridge Rules
 resource "aws_cloudwatch_event_rule" "low_sentiment" {
   name        = "Your6-LowSentimentRule"
   description = "Triggers alert when sentiment is below threshold"
@@ -454,18 +453,110 @@ resource "aws_cloudwatch_event_rule" "low_sentiment" {
   })
 }
 
+resource "aws_cloudwatch_event_rule" "crisis_protocol" {
+  name        = "Your6-CrisisProtocolRule"
+  description = "Triggers immediate response for crisis situations"
+
+  event_pattern = jsonencode({
+    source      = ["your6.checkin.crisis"]
+    detail-type = ["Crisis Protocol Alert"]
+  })
+}
+
+resource "aws_cloudwatch_event_rule" "high_risk" {
+  name        = "Your6-HighRiskRule"
+  description = "Triggers intervention for high-risk situations"
+
+  event_pattern = jsonencode({
+    source      = ["your6.checkin.highrisk"]
+    detail-type = ["Immediate Intervention Required"]
+  })
+}
+
+resource "aws_cloudwatch_event_rule" "proactive" {
+  name        = "Your6-ProactiveRule"
+  description = "Triggers proactive outreach"
+
+  event_pattern = jsonencode({
+    source      = ["your6.checkin.proactive"]
+    detail-type = ["Proactive Outreach Recommended"]
+  })
+}
+
+# Event Targets
 resource "aws_cloudwatch_event_target" "alert_dispatcher" {
   rule      = aws_cloudwatch_event_rule.low_sentiment.name
   target_id = "AlertDispatcherTarget"
   arn       = aws_lambda_function.alert_dispatcher.arn
 }
 
+resource "aws_cloudwatch_event_target" "crisis_alert" {
+  rule      = aws_cloudwatch_event_rule.crisis_protocol.name
+  target_id = "CrisisAlertTarget"
+  arn       = aws_lambda_function.alert_dispatcher.arn
+}
+
+resource "aws_cloudwatch_event_target" "high_risk_alert" {
+  rule      = aws_cloudwatch_event_rule.high_risk.name
+  target_id = "HighRiskAlertTarget"
+  arn       = aws_lambda_function.alert_dispatcher.arn
+}
+
+resource "aws_cloudwatch_event_target" "proactive_alert" {
+  rule      = aws_cloudwatch_event_rule.proactive.name
+  target_id = "ProactiveAlertTarget"
+  arn       = aws_lambda_function.alert_dispatcher.arn
+}
+
+# Lambda Permissions for EventBridge
 resource "aws_lambda_permission" "eventbridge" {
   statement_id  = "AllowEventBridgeInvoke"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.alert_dispatcher.function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.low_sentiment.arn
+}
+
+resource "aws_lambda_permission" "eventbridge_crisis" {
+  statement_id  = "AllowEventBridgeCrisisInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.alert_dispatcher.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.crisis_protocol.arn
+}
+
+resource "aws_lambda_permission" "eventbridge_highrisk" {
+  statement_id  = "AllowEventBridgeHighRiskInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.alert_dispatcher.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.high_risk.arn
+}
+
+resource "aws_lambda_permission" "eventbridge_proactive" {
+  statement_id  = "AllowEventBridgeProactiveInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.alert_dispatcher.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.proactive.arn
+}
+
+# CloudWatch Dashboard
+resource "aws_cloudwatch_dashboard" "your6_monitoring" {
+  dashboard_name = "Your6-AI-Monitoring"
+  
+  dashboard_body = file("${path.module}/../cloudwatch-dashboard.json")
+}
+
+# CloudWatch Log Groups
+resource "aws_cloudwatch_log_group" "checkin_processor" {
+  name              = "/aws/lambda/Your6-CheckinProcessor"
+  retention_in_days = 30
+}
+
+resource "aws_cloudwatch_log_group" "alert_dispatcher" {
+  name              = "/aws/lambda/Your6-AlertDispatcher"
+  retention_in_days = 30
 }
 
 # Outputs
@@ -487,4 +578,9 @@ output "checkin_dlq_url" {
 output "alert_dlq_url" {
   description = "Dead Letter Queue URL for failed alerts"
   value       = aws_sqs_queue.alert_dlq.url
+}
+
+output "operations_topic_arn" {
+  description = "Operations SNS Topic ARN for crisis alerts"
+  value       = aws_sns_topic.operations_alerts.arn
 }

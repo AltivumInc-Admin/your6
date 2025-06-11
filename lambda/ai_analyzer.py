@@ -5,6 +5,7 @@ from typing import Dict, List, Tuple, Optional
 from datetime import datetime, timedelta
 from collections import defaultdict
 import boto3
+from crisis_failsafe import apply_crisis_failsafe
 
 logger = logging.getLogger()
 
@@ -66,7 +67,7 @@ class AdvancedSentimentAnalyzer:
         Perform advanced sentiment analysis with entity detection and risk scoring
         """
         # Get user history for baseline
-        user_profile = self._get_user_profile(user_id)
+        user_profile = self._get_user_profile(user_id) or {}
         baseline_sentiment = user_profile.get('baseline_sentiment', -0.2)
         
         # Standard sentiment analysis
@@ -82,17 +83,31 @@ class AdvancedSentimentAnalyzer:
         )
         
         # Syntax analysis for deeper understanding
-        syntax_result = self.comprehend.detect_syntax(
-            Text=text,
-            LanguageCode='en'
-        )
+        try:
+            syntax_result = self.comprehend.detect_syntax(
+                Text=text,
+                LanguageCode='en'
+            )
+        except Exception as e:
+            logger.warning(f"Syntax analysis failed: {str(e)}, continuing without it")
+            syntax_result = {'SyntaxTokens': []}
         
         # Calculate risk score
         risk_score, risk_factors = self._calculate_risk_score(text)
+        logger.info(f"Raw risk score calculated: {risk_score}, factors: {risk_factors}")
         
         # Adjust for temporal factors
         temporal_multiplier = self._get_temporal_multiplier()
         adjusted_risk_score = risk_score * temporal_multiplier
+        logger.info(f"Adjusted risk score: {adjusted_risk_score} (multiplier: {temporal_multiplier})")
+        
+        # Apply crisis detection failsafe
+        final_risk_score, failsafe_triggered, failsafe_reason = apply_crisis_failsafe(
+            text, adjusted_risk_score, sentiment_score
+        )
+        if failsafe_triggered:
+            logger.critical(f"Crisis failsafe applied: {failsafe_reason}")
+            adjusted_risk_score = final_risk_score
         
         # Extract meaningful entities
         entities = self._extract_relevant_entities(entities_result, syntax_result)
@@ -124,6 +139,7 @@ class AdvancedSentimentAnalyzer:
         # Update user profile with new data point
         self._update_user_profile(user_id, analysis)
         
+        logger.info(f"Advanced analysis complete for {user_id}: risk_score={adjusted_risk_score}, sentiment={sentiment_result['Sentiment']}")
         return analysis
     
     def _calculate_risk_score(self, text: str) -> Tuple[float, List[str]]:
@@ -142,7 +158,8 @@ class AdvancedSentimentAnalyzer:
         for pattern, weight in self.PROTECTIVE_FACTORS.items():
             if re.search(pattern, text_lower, re.IGNORECASE):
                 risk_score += weight  # Note: weights are negative
-                risk_factors.append(f"protective: {pattern.strip('\\b()')}")
+                cleaned_pattern = pattern.strip('\\b()')
+                risk_factors.append(f"protective: {cleaned_pattern}")
         
         # Ensure score is non-negative
         risk_score = max(0, risk_score)

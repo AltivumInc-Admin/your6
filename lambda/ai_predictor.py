@@ -3,7 +3,7 @@ import logging
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime, timedelta
 from decimal import Decimal
-import numpy as np
+# import numpy as np  # Removed for Lambda compatibility
 from collections import defaultdict
 import boto3
 
@@ -171,14 +171,25 @@ class PredictiveRiskAnalytics:
         
         sentiments = [h.get('sentiment_score', 0) for h in history]
         
-        # Calculate trend
+        # Calculate trend using simple linear regression without numpy
         if len(sentiments) >= 3:
-            # Linear regression for trend
-            x = np.arange(len(sentiments))
-            slope, _ = np.polyfit(x, sentiments, 1)
+            # Simple linear regression calculation
+            n = len(sentiments)
+            x_values = list(range(n))
             
-            if slope < -config['threshold']:
-                return abs(slope) / config['threshold']
+            # Calculate means
+            x_mean = sum(x_values) / n
+            y_mean = sum(sentiments) / n
+            
+            # Calculate slope
+            numerator = sum((x - x_mean) * (y - y_mean) for x, y in zip(x_values, sentiments))
+            denominator = sum((x - x_mean) ** 2 for x in x_values)
+            
+            if denominator != 0:
+                slope = numerator / denominator
+                
+                if slope < -config['threshold']:
+                    return abs(slope) / config['threshold']
         
         # Simple comparison for short history
         decline = sentiments[0] - sentiments[-1]

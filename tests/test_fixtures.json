@@ -1,0 +1,67 @@
+{
+  "test_texts": {
+    "crisis": [
+      {
+        "text": "I can't do this anymore. The nightmares won't stop. I keep seeing their faces. I have my gun right here and I'm thinking about ending it all. No one would even notice if I was gone.",
+        "expected_risk_min": 24,
+        "expected_sentiment": "NEGATIVE",
+        "expected_path": "CrisisProtocol",
+        "risk_factors": ["gun", "ending it", "no one"]
+      },
+      {
+        "text": "This is goodbye. I've written my note and I'm ready. The pills are here. Thank you for everything but I can't fight anymore.",
+        "expected_risk_min": 25,
+        "expected_sentiment": "NEGATIVE", 
+        "expected_path": "CrisisProtocol",
+        "risk_factors": ["goodbye", "pills", "cant go on"]
+      }
+    ],
+    "high_risk": [
+      {
+        "text": "Everything feels hopeless. I've been drinking all day and can't stop thinking about how I failed everyone. Maybe they'd be better off without me.",
+        "expected_risk_min": 18,
+        "expected_sentiment": "NEGATIVE",
+        "expected_path": "ImmediateIntervention",
+        "risk_factors": ["hopeless", "drinking heavily", "better off"]
+      }
+    ],
+    "moderate_risk": [
+      {
+        "text": "Another sleepless night with the nightmares. I feel so alone and worthless. What's the point of going on?",
+        "expected_risk_min": 13,
+        "expected_sentiment": "NEGATIVE",
+        "expected_path": "StandardAlert",
+        "risk_factors": ["alone", "worthless", "nightmares"]
+      }
+    ],
+    "positive": [
+      {
+        "text": "Had a great session with my therapist today. Feeling hopeful about the future. Going to call my battle buddy later.",
+        "expected_risk_min": 0,
+        "expected_sentiment": "POSITIVE",
+        "expected_path": "CheckinComplete",
+        "risk_factors": []
+      }
+    ]
+  },
+  "user_profiles": {
+    "veteran123": {
+      "userId": "veteran123",
+      "profile": {
+        "preferred_name": "John",
+        "branch": "Army",
+        "communication_style": "military_brief"
+      },
+      "trustedContact": {
+        "name": "Sarah Smith",
+        "phone": "+16176868438",
+        "email": "christian.perez0321@gmail.com",
+        "preferredMethod": "SMS"
+      },
+      "analytics": {
+        "baseline_sentiment": -0.2,
+        "avg_sentiment_30d": -0.3
+      }
+    }
+  }
+}
