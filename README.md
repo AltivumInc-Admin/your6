@@ -22,13 +22,17 @@ Your6 bridges the gap between a veteran in distress and the people who care abou
 
 - ✅ Voice or text check-in via secure API
 - ✅ Sentiment and key phrase extraction using Amazon Comprehend
-- ✅ AI-generated supportive feedback using Amazon Bedrock
+- ✅ AI-generated supportive feedback using Amazon Bedrock (Claude 3.5 Sonnet)
 - ✅ **Automated trusted contact alerts when sentiment < -0.6 threshold**
-- ✅ **Human-friendly SNS messages with actionable guidance**
+- ✅ **Dual notification system (SMS + Email) via SNS**
 - ✅ **Direct VA Crisis Line integration (1-800-273-8255, press 1)**
 - ✅ Longitudinal tracking in DynamoDB with trusted contact info
 - ✅ S3 archival for check-in history
-- ✅ JSON-based API for future UI/mobile integration
+- ✅ Step Functions workflow orchestration
+- ✅ Dead Letter Queues for reliability
+- ✅ Comprehensive AI logging with request tracking
+- ✅ CloudWatch dashboard for AI monitoring
+- ✅ Fallback responses with clear system indicators
 
 ---
 
@@ -37,26 +41,31 @@ Your6 bridges the gap between a veteran in distress and the people who care abou
 ### Event Flow
 
 ```
-          [User Check-In]
-               ↓
-         [API Gateway]
-               ↓
-      [Lambda: handler.py]
-    ├── Transcribe (voice → text)
-    ├── Comprehend (sentiment analysis)
-    ├── Bedrock (support message)
-    ├── S3 + DynamoDB (storage)
-    └── ↓ if sentiment < -0.6
-       [EventBridge Rule]
-              ↓
-    [Lambda: alert_dispatcher.py]
-              ↓
-         [SNS → Trusted Contact]
-              ↓
-       📱 SMS/Email with:
-         - Alert timestamp
-         - Support suggestion
-         - VA Crisis Line info
+     [User Check-In]
+          ↓
+    [API Gateway]
+          ↓
+  [Step Functions] ──────┐
+          ↓              │
+ [Lambda: handler.py]    │ (DLQ for failures)
+├── Transcribe (voice)   │
+├── Comprehend (sentiment)│
+├── Bedrock (AI response)│
+├── DynamoDB (user data) │
+├── S3 (archival)        │
+└── ↓ if score < -0.6    │
+   [EventBridge Rule]    │
+         ↓               │
+[Lambda: alert_dispatcher.py]
+         ↓
+    [SNS Topic]
+    ├── 📱 SMS
+    └── 📧 Email
+         
+Alert Contents:
+- Timestamp & user ID
+- Support suggestions
+- VA Crisis Line: 1-800-273-8255
 ```
 
 ---
@@ -67,13 +76,17 @@ Your6 bridges the gap between a veteran in distress and the people who care abou
 |--------------------------|-------------------------------------------------------------------------|
 | **Amazon API Gateway**   | RESTful endpoint for user check-ins                                     |
 | **AWS Lambda**           | Core orchestration logic (input → process → feedback → store)           |
+| **AWS Step Functions**   | Visual workflow orchestration with retry logic                          |
 | **Amazon Transcribe**    | Converts voice memos to text                                            |
 | **Amazon Comprehend**    | Sentiment and entity analysis                                           |
-| **Amazon Bedrock**       | Claude or Titan – generates tailored responses                          |
-| **Amazon DynamoDB**      | Tracks user sentiment scores over time                                  |
-| **Amazon S3**            | Archives raw user submissions                                           |
-| **Amazon EventBridge**   | Detects sentiment dips triggering downstream events                     |
-| **Amazon SNS**           | Sends alerts (e.g. to user, support team, future integration)           |
+| **Amazon Bedrock**       | Claude 3.5 Sonnet – generates tailored responses                        |
+| **Amazon DynamoDB**      | Tracks user data, trusted contacts, and sentiment history               |
+| **Amazon S3**            | Archives check-ins with lifecycle policies                              |
+| **Amazon EventBridge**   | Triggers alerts when sentiment < -0.6                                   |
+| **Amazon SNS**           | Dual-channel notifications (SMS + Email)                                |
+| **Amazon SQS**           | Dead Letter Queues for error handling                                   |
+| **CloudWatch**           | Comprehensive logging, metrics, and dashboards                          |
+| **Amazon SES**           | Email delivery (required for SNS email subscriptions)                   |
 
 ---
 
@@ -83,15 +96,30 @@ Your6 bridges the gap between a veteran in distress and the people who care abou
 your6/
 ├── lambda/
 │   ├── handler.py              # Main check-in processor
+│   ├── handler_stepfunctions.py # Step Functions handler
 │   ├── alert_dispatcher.py     # Trusted contact alerting
-│   └── utils.py               # Shared AWS service helpers
+│   ├── utils.py               # Shared AWS service helpers
+│   └── ai_logger.py           # AI service logging & metrics
 ├── prompts/
 │   └── bedrock_system_prompt.txt
 ├── events/
 │   ├── text_checkin.json      # Sample text input
 │   ├── voice_checkin.json     # Sample voice input
 │   └── alert_event.json       # Sample alert trigger
-├── template.yaml              # SAM/CloudFormation
+├── api-docs/
+│   └── openapi.yaml           # API documentation
+├── terraform/                  # Alternative IaC deployment
+│   ├── main.tf
+│   ├── variables.tf
+│   └── README.md
+├── tests/                      # Unit tests
+│   ├── test_handler.py
+│   └── test_alert_dispatcher.py
+├── cloudformation-fixed.yaml   # Enhanced CloudFormation
+├── cloudwatch-dashboard.json   # AI monitoring dashboard
+├── sns-policy-fixed.json      # SNS topic policy
+├── SYSTEM-REVIEW.md           # System documentation
+├── demo-video-script.md       # Demo instructions
 ├── README.md
 └── requirements.txt
 ```
@@ -126,10 +154,17 @@ your6/
 
 ```json
 {
-  "response": "Thanks for checking in. It sounds like you're feeling low today. You're not alone—take a few minutes to breathe. Here's one small thing you can do now...",
+  "response": "Thanks for checking in. It sounds like you're feeling low today. You're not alone—take a few minutes to breathe. Remember, reaching out is a sign of strength.",
   "sentiment": "NEGATIVE",
-  "score": 0.87,
-  "entities": ["feeling low", "unsure"]
+  "score": -0.72,
+  "entities": ["feeling low", "unsure"],
+  "alertTriggered": true,
+  "aiMetadata": {
+    "model": "claude-3.5-sonnet",
+    "fallback": false,
+    "latency_ms": 245.3,
+    "request_id": "abc123..."
+  }
 }
 ```
 
@@ -181,6 +216,21 @@ Resources:
 
 ---
 
+## 🔧 Recent Enhancements
+
+### Phase 1: AI Monitoring & Logging (Complete)
+- ✅ Structured JSON logging for all AI service calls
+- ✅ CloudWatch metrics tracking (latency, errors, tokens)
+- ✅ Unique request IDs for end-to-end tracing
+- ✅ Fallback responses with system indicators
+- ✅ Real-time monitoring dashboard
+- ✅ DynamoDB Decimal conversion fix
+
+### Phase 2: Coming Soon
+- Retry logic with exponential backoff
+- AI response validation & quality checks
+- Advanced sentiment analysis with entity detection
+
 ## 📈 Future Enhancements
 
 - Add Cognito for secure veteran authentication
@@ -206,6 +256,23 @@ sam local invoke --event events/sample_input.json
 
 ## 🛠️ Deployment
 
+### Option 1: CloudFormation
+```bash
+aws cloudformation deploy \
+  --template-file cloudformation-fixed.yaml \
+  --stack-name your6-stack \
+  --capabilities CAPABILITY_IAM
+```
+
+### Option 2: Terraform
+```bash
+cd terraform/
+terraform init
+terraform plan
+terraform apply
+```
+
+### Option 3: SAM
 ```bash
 sam deploy --guided
 ```

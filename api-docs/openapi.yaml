@@ -1,0 +1,178 @@
+openapi: 3.0.0
+info:
+  title: Your6 API
+  description: AI-Powered Veteran Support Mobilization System API
+  version: 1.0.0
+  contact:
+    name: Altivum Inc.
+    email: christian.perez@altivum.io
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://3il8ifyfr7.execute-api.us-east-1.amazonaws.com/prod
+    description: Production API
+
+paths:
+  /check-in:
+    post:
+      summary: Submit a veteran check-in
+      description: |
+        Accepts text or voice check-ins from veterans. Analyzes sentiment,
+        generates AI response, and triggers alerts if sentiment is below threshold.
+      operationId: submitCheckin
+      tags:
+        - Check-ins
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/TextCheckin'
+                - $ref: '#/components/schemas/VoiceCheckin'
+            examples:
+              textCheckin:
+                summary: Text-based check-in
+                value:
+                  userId: "veteran123"
+                  text: "Feeling isolated today. The nightmares came back."
+              voiceCheckin:
+                summary: Voice-based check-in
+                value:
+                  userId: "veteran456"
+                  voiceS3Uri: "s3://your6-checkins-205930636302/veteran456/voice/2024-06-10-audio.wav"
+      responses:
+        '200':
+          description: Check-in processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckinResponse'
+              example:
+                response: "I hear you're feeling isolated. That takes courage to share. Consider reaching out to a buddy today."
+                sentiment: "NEGATIVE"
+                score: -0.72
+                entities: ["isolated", "nightmares"]
+        '400':
+          description: Bad request - missing required fields
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "userId is required"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Internal server error"
+                message: "An unexpected error occurred processing your check-in"
+
+components:
+  schemas:
+    TextCheckin:
+      type: object
+      required:
+        - userId
+        - text
+      properties:
+        userId:
+          type: string
+          description: Unique identifier for the veteran
+          example: "veteran123"
+        text:
+          type: string
+          description: Text content of the check-in
+          minLength: 1
+          maxLength: 5000
+          example: "Had a rough day today. Feeling disconnected from everyone."
+    
+    VoiceCheckin:
+      type: object
+      required:
+        - userId
+        - voiceS3Uri
+      properties:
+        userId:
+          type: string
+          description: Unique identifier for the veteran
+          example: "veteran456"
+        voiceS3Uri:
+          type: string
+          format: uri
+          description: S3 URI of the voice recording (WAV format)
+          pattern: "^s3://[a-z0-9.-]+/.*\\.wav$"
+          example: "s3://your6-checkins-205930636302/veteran456/voice/2024-06-10.wav"
+    
+    CheckinResponse:
+      type: object
+      properties:
+        response:
+          type: string
+          description: AI-generated supportive message
+          example: "Thank you for checking in. It sounds like you're going through a tough time."
+        sentiment:
+          type: string
+          enum: [POSITIVE, NEGATIVE, NEUTRAL, MIXED]
+          description: Detected sentiment category
+          example: "NEGATIVE"
+        score:
+          type: number
+          format: float
+          minimum: -1
+          maximum: 1
+          description: Sentiment score (-1 to 1, where negative values indicate negative sentiment)
+          example: -0.72
+        entities:
+          type: array
+          items:
+            type: string
+          description: Key phrases extracted from the check-in
+          example: ["rough day", "disconnected"]
+    
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Error type or code
+          example: "ValidationError"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "The request body is missing required fields"
+
+  securitySchemes:
+    ApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for authentication (future implementation)
+
+tags:
+  - name: Check-ins
+    description: Veteran check-in operations
+
+x-amazon-apigateway-request-validators:
+  all:
+    validateRequestBody: true
+    validateRequestParameters: true
+
+x-amazon-apigateway-gateway-responses:
+  DEFAULT_4XX:
+    responseParameters:
+      gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+    responseTemplates:
+      application/json: '{"error": "$context.error.message"}'
+  DEFAULT_5XX:
+    responseParameters:
+      gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+    responseTemplates:
+      application/json: '{"error": "Internal server error", "requestId": "$context.requestId"}'

@@ -75,13 +75,11 @@ def lambda_handler(event: Dict, context) -> Dict:
         logger.info(f"Processing check-in for user {user_id}: {text[:50]}...")
         
         # Analyze sentiment
-        sentiment, sentiment_score, key_phrases = analyze_sentiment(text, user_id)
+        sentiment, sentiment_score, key_phrases = analyze_sentiment(text)
         logger.info(f"Sentiment analysis: {sentiment} ({sentiment_score})")
         
         # Generate AI response
-        ai_response_data = generate_ai_response(text, sentiment, user_id, sentiment_score)
-        ai_response = ai_response_data["response"]
-        ai_metadata = ai_response_data.get("metadata", {})
+        ai_response = generate_ai_response(text, sentiment, user_id)
         
         # Store check-in data
         stored = store_checkin(
@@ -119,8 +117,7 @@ def lambda_handler(event: Dict, context) -> Dict:
             'entities': key_phrases[:5],  # Limit to top 5 phrases
             'userId': user_id,
             'text': text[:200],  # Include preview for Step Functions
-            'alertTriggered': alert_triggered,
-            'aiMetadata': ai_metadata  # Include AI metadata for monitoring
+            'alertTriggered': alert_triggered
         }
         
         # Return appropriate format

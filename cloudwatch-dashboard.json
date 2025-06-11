@@ -1,0 +1,122 @@
+{
+    "start": "-PT3H",
+    "periodOverride": "auto",
+    "widgets": [
+        {
+            "type": "metric",
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 6,
+            "properties": {
+                "metrics": [
+                    [ "Your6/AI", "Latency", { "stat": "Average", "label": "Average Latency" } ],
+                    [ "...", { "stat": "p99", "label": "P99 Latency" } ],
+                    [ "...", { "stat": "Maximum", "label": "Max Latency" } ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "AI Service Latency",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "label": "Milliseconds",
+                        "showUnits": false
+                    }
+                }
+            }
+        },
+        {
+            "type": "metric",
+            "x": 12,
+            "y": 0,
+            "width": 12,
+            "height": 6,
+            "properties": {
+                "metrics": [
+                    [ "Your6/AI", "Errors", { "stat": "Sum" } ],
+                    [ "Your6/AI", "FallbackUsage", { "stat": "Sum" } ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "AI Errors and Fallbacks",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "label": "Count",
+                        "showUnits": false
+                    }
+                }
+            }
+        },
+        {
+            "type": "metric",
+            "x": 0,
+            "y": 6,
+            "width": 12,
+            "height": 6,
+            "properties": {
+                "metrics": [
+                    [ "Your6/AI", "SentimentScore", { "stat": "Average" } ],
+                    [ { "expression": "SEARCH(' {Your6/AI,Sentiment} MetricName=\"SentimentScore\" ', 'Average', 300)", "id": "e1" } ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "Sentiment Score Distribution",
+                "period": 300
+            }
+        },
+        {
+            "type": "metric",
+            "x": 12,
+            "y": 6,
+            "width": 12,
+            "height": 6,
+            "properties": {
+                "metrics": [
+                    [ "Your6/AI", "TokenUsage", { "stat": "Sum" } ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "us-east-1",
+                "title": "Bedrock Token Usage",
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "label": "Tokens",
+                        "showUnits": false
+                    }
+                }
+            }
+        },
+        {
+            "type": "log",
+            "x": 0,
+            "y": 12,
+            "width": 24,
+            "height": 6,
+            "properties": {
+                "query": "SOURCE '/aws/lambda/Your6-CheckinProcessor'\n| fields @timestamp, event_type, service, success, latency_ms, error.type, user_id\n| filter event_type = \"ai_service_response\"\n| sort @timestamp desc\n| limit 100",
+                "region": "us-east-1",
+                "title": "Recent AI Service Calls",
+                "queryType": "Logs"
+            }
+        },
+        {
+            "type": "log",
+            "x": 0,
+            "y": 18,
+            "width": 24,
+            "height": 6,
+            "properties": {
+                "query": "SOURCE '/aws/lambda/Your6-CheckinProcessor'\n| fields @timestamp, reason, user_id, context.sentiment_score, context.fallback_type\n| filter event_type = \"ai_fallback_used\"\n| sort @timestamp desc\n| limit 50",
+                "region": "us-east-1",
+                "title": "Fallback Response Usage",
+                "queryType": "Logs"
+            }
+        }
+    ]
+}

@@ -1,0 +1,350 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Your6: AI-Powered Veteran Support Mobilization System (Enhanced with DLQ and Step Functions)'
+
+Resources:
+  # Dead Letter Queues
+  CheckinDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: Your6-CheckinDLQ
+      MessageRetentionPeriod: 1209600  # 14 days
+      Tags:
+        - Key: Purpose
+          Value: Failed check-in processing
+
+  AlertDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: Your6-AlertDLQ
+      MessageRetentionPeriod: 1209600  # 14 days
+      Tags:
+        - Key: Purpose
+          Value: Failed alert dispatching
+
+  # DynamoDB Table
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: your6-users
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+  # S3 Bucket for Check-ins
+  CheckinsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'your6-checkins-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: TransitionToIA
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 90
+                StorageClass: STANDARD_IA
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # SNS Topic for Alerts
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: Your6-TrustedContactAlerts
+      DisplayName: Your6 Alerts
+
+  # IAM Roles
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: Your6LambdaPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                Resource: !GetAtt UsersTable.Arn
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub '${CheckinsBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - comprehend:DetectSentiment
+                  - comprehend:DetectKeyPhrases
+                  - bedrock:InvokeModel
+                  - transcribe:StartTranscriptionJob
+                  - transcribe:GetTranscriptionJob
+                  - events:PutEvents
+                  - sns:Publish
+                  - sqs:SendMessage
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource: !Ref Your6StateMachine
+
+  StepFunctionsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StepFunctionsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt CheckinFunction.Arn
+                  - !GetAtt AlertDispatcherFunction.Arn
+              - Effect: Allow
+                Action:
+                  - events:PutEvents
+                Resource: '*'
+
+  # Lambda Functions with DLQ
+  CheckinFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: Your6-CheckinProcessor
+      Runtime: python3.11
+      Handler: handler.lambda_handler
+      Code:
+        S3Bucket: your6-deployment-bucket-205930636302
+        S3Key: lambda-package-v3.zip
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      ReservedConcurrentExecutions: 100
+      DeadLetterConfig:
+        TargetArn: !GetAtt CheckinDLQ.Arn
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref UsersTable
+          S3_BUCKET: !Ref CheckinsBucket
+          SNS_TOPIC_ARN: !Ref AlertTopic
+          STATE_MACHINE_ARN: !Ref Your6StateMachine
+
+  AlertDispatcherFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: Your6-AlertDispatcher
+      Runtime: python3.11
+      Handler: alert_dispatcher.lambda_handler
+      Code:
+        S3Bucket: your6-deployment-bucket-205930636302
+        S3Key: lambda-package-v2.zip
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      ReservedConcurrentExecutions: 50
+      DeadLetterConfig:
+        TargetArn: !GetAtt AlertDLQ.Arn
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref UsersTable
+          S3_BUCKET: !Ref CheckinsBucket
+          SNS_TOPIC_ARN: !Ref AlertTopic
+
+  # Step Functions State Machine
+  Your6StateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: Your6-CheckinWorkflow
+      RoleArn: !GetAtt StepFunctionsExecutionRole.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "Your6 Check-in Processing Workflow",
+          "StartAt": "ProcessCheckin",
+          "States": {
+            "ProcessCheckin": {
+              "Type": "Task",
+              "Resource": "${CheckinFunction.Arn}",
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "Next": "HandleCheckinFailure"
+                }
+              ],
+              "Next": "CheckSentiment"
+            },
+            "CheckSentiment": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.sentimentScore",
+                  "NumericLessThan": -0.6,
+                  "Next": "TriggerAlert"
+                }
+              ],
+              "Default": "CheckinComplete"
+            },
+            "TriggerAlert": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::events:putEvents",
+              "Parameters": {
+                "Entries": [
+                  {
+                    "Source": "your6.checkin",
+                    "DetailType": "Low Sentiment Alert",
+                    "Detail": {
+                      "userId.$": "$.userId",
+                      "sentimentScore.$": "$.sentimentScore",
+                      "textPreview.$": "$.textPreview",
+                      "timestamp.$": "$.timestamp"
+                    }
+                  }
+                ]
+              },
+              "Next": "CheckinComplete"
+            },
+            "HandleCheckinFailure": {
+              "Type": "Pass",
+              "Result": {
+                "status": "failed",
+                "message": "Check-in processing failed"
+              },
+              "Next": "NotifyFailure"
+            },
+            "NotifyFailure": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::sns:publish",
+              "Parameters": {
+                "TopicArn": "${AlertTopic}",
+                "Subject": "Your6 Check-in Processing Failed",
+                "Message.$": "$.error"
+              },
+              "Next": "WorkflowFailed"
+            },
+            "CheckinComplete": {
+              "Type": "Succeed"
+            },
+            "WorkflowFailed": {
+              "Type": "Fail"
+            }
+          }
+        }
+
+  # API Gateway
+  Your6Api:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: Your6-API
+      Description: API for Your6 veteran check-ins
+
+  CheckinResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref Your6Api
+      ParentId: !GetAtt Your6Api.RootResourceId
+      PathPart: check-in
+
+  CheckinMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref Your6Api
+      ResourceId: !Ref CheckinResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CheckinFunction.Arn}/invocations'
+
+  # Lambda Permissions
+  CheckinFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CheckinFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${Your6Api}/*/*'
+
+  # API Deployment
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - CheckinMethod
+    Properties:
+      RestApiId: !Ref Your6Api
+      StageName: prod
+
+  # EventBridge Rule
+  LowSentimentRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: Your6-LowSentimentRule
+      EventPattern:
+        source:
+          - your6.checkin
+        detail-type:
+          - Low Sentiment Alert
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt AlertDispatcherFunction.Arn
+          Id: AlertDispatcherTarget
+
+  # Permission for EventBridge
+  PermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AlertDispatcherFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt LowSentimentRule.Arn
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${Your6Api}.execute-api.${AWS::Region}.amazonaws.com/prod/check-in'
+  
+  StateMachineArn:
+    Description: Step Functions State Machine ARN
+    Value: !Ref Your6StateMachine
+  
+  CheckinDLQUrl:
+    Description: Dead Letter Queue for failed check-ins
+    Value: !Ref CheckinDLQ
+  
+  AlertDLQUrl:
+    Description: Dead Letter Queue for failed alerts
+    Value: !Ref AlertDLQ

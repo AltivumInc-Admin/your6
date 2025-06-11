@@ -74,8 +74,11 @@ def lambda_handler(event: Dict, context) -> Dict:
         contact_email = trusted_contact.get('email')
         
         notification_sent = False
+        sms_sent = False
+        email_sent = False
         
-        if contact_method == 'SMS' and contact_phone:
+        # Try SMS first if available
+        if contact_phone:
             # Send SMS via SNS
             try:
                 response = sns.publish(
@@ -89,26 +92,27 @@ def lambda_handler(event: Dict, context) -> Dict:
                     }
                 )
                 logger.info(f"SMS sent to trusted contact for user {user_id}")
+                sms_sent = True
                 notification_sent = True
             except Exception as e:
                 logger.error(f"Failed to send SMS: {str(e)}")
         
-        elif contact_method == 'EMAIL' and contact_email:
-            # Send Email via SNS
+        # Also send email if available
+        if contact_email:
+            # Send Email via SNS Topic
             try:
-                response = sns.publish(
-                    TopicArn=os.environ.get('SNS_TOPIC_ARN'),  # Or direct email
-                    Subject=alert_data['subject'],
-                    Message=alert_data['message'],
-                    MessageAttributes={
-                        'email': {
-                            'DataType': 'String',
-                            'StringValue': contact_email
-                        }
-                    }
-                )
-                logger.info(f"Email sent to trusted contact for user {user_id}")
-                notification_sent = True
+                topic_arn = os.environ.get('SNS_TOPIC_ARN')
+                if topic_arn:
+                    response = sns.publish(
+                        TopicArn=topic_arn,
+                        Message=alert_data['message'],
+                        Subject=alert_data['subject']
+                    )
+                    logger.info(f"Email sent via SNS topic for user {user_id}")
+                    email_sent = True
+                    notification_sent = True
+                else:
+                    logger.error("SNS_TOPIC_ARN not configured")
             except Exception as e:
                 logger.error(f"Failed to send email: {str(e)}")
         
@@ -118,7 +122,9 @@ def lambda_handler(event: Dict, context) -> Dict:
             'timestamp': timestamp,
             'sentimentScore': sentiment_score,
             'trustedContactName': trusted_contact.get('name'),
-            'contactMethod': contact_method,
+            'contactMethod': 'BOTH',
+            'smsSent': sms_sent,
+            'emailSent': email_sent,
             'notificationSent': notification_sent,
             'alertType': 'LOW_SENTIMENT'
         }

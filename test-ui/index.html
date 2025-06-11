@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your6 - Test Interface</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+        }
+        .tagline {
+            text-align: center;
+            color: #7f8c8d;
+            margin-bottom: 30px;
+        }
+        input, textarea, button {
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+        button {
+            background: #3498db;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        button:hover {
+            background: #2980b9;
+        }
+        button:disabled {
+            background: #95a5a6;
+            cursor: not-allowed;
+        }
+        .response {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+            display: none;
+        }
+        .response.success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .response.error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .sentiment {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-weight: bold;
+            margin-left: 5px;
+        }
+        .sentiment.POSITIVE { background: #28a745; color: white; }
+        .sentiment.NEGATIVE { background: #dc3545; color: white; }
+        .sentiment.NEUTRAL { background: #6c757d; color: white; }
+        .sentiment.MIXED { background: #ffc107; color: black; }
+        .test-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .test-buttons button {
+            flex: 1;
+            font-size: 14px;
+            padding: 8px;
+        }
+        .test-buttons button.positive { background: #28a745; }
+        .test-buttons button.negative { background: #dc3545; }
+        .test-buttons button.neutral { background: #6c757d; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎖️ Your6</h1>
+        <p class="tagline">I've got your six - AI-Powered Veteran Support System</p>
+        
+        <form id="checkinForm">
+            <input type="text" id="userId" placeholder="User ID (e.g., veteran123)" required>
+            <textarea id="message" placeholder="How are you feeling today?" required></textarea>
+            <button type="submit" id="submitBtn">Submit Check-in</button>
+        </form>
+
+        <div class="test-buttons">
+            <button type="button" class="positive" onclick="fillTestData('positive')">Test Positive</button>
+            <button type="button" class="neutral" onclick="fillTestData('neutral')">Test Neutral</button>
+            <button type="button" class="negative" onclick="fillTestData('negative')">Test Negative</button>
+        </div>
+
+        <div id="response" class="response"></div>
+    </div>
+
+    <script>
+        // API endpoint - update this with your actual endpoint
+        const API_ENDPOINT = 'https://3il8ifyfr7.execute-api.us-east-1.amazonaws.com/prod/check-in';
+
+        // Test data
+        const testData = {
+            positive: {
+                userId: 'veteran123',
+                text: 'Had a great day today! Connected with my old squad and went for a long run. Feeling strong and supported.'
+            },
+            neutral: {
+                userId: 'veteran123',
+                text: 'Just checking in. Today was okay, nothing special. Keeping busy with work and staying on track.'
+            },
+            negative: {
+                userId: 'veteran123',
+                text: 'Really struggling today. The nightmares came back last night and I feel so isolated. Not sure how to cope.'
+            }
+        };
+
+        // Fill test data
+        function fillTestData(sentiment) {
+            document.getElementById('userId').value = testData[sentiment].userId;
+            document.getElementById('message').value = testData[sentiment].text;
+        }
+
+        // Handle form submission
+        document.getElementById('checkinForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const submitBtn = document.getElementById('submitBtn');
+            const responseDiv = document.getElementById('response');
+            
+            // Disable button
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Processing...';
+            
+            // Get form data
+            const userId = document.getElementById('userId').value;
+            const text = document.getElementById('message').value;
+            
+            try {
+                // Make API call
+                const response = await fetch(API_ENDPOINT, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        userId: userId,
+                        text: text
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // Show success response
+                    responseDiv.className = 'response success';
+                    responseDiv.innerHTML = `
+                        <h3>✅ Check-in Processed</h3>
+                        <p><strong>AI Response:</strong> ${data.response}</p>
+                        <p><strong>Sentiment:</strong> <span class="sentiment ${data.sentiment}">${data.sentiment}</span> (Score: ${data.score.toFixed(2)})</p>
+                        <p><strong>Key Phrases:</strong> ${data.entities.join(', ')}</p>
+                        ${data.score < -0.6 ? '<p>⚠️ <strong>Alert sent to trusted contact</strong></p>' : ''}
+                    `;
+                } else {
+                    throw new Error(data.error || 'Failed to process check-in');
+                }
+                
+            } catch (error) {
+                // Show error
+                responseDiv.className = 'response error';
+                responseDiv.innerHTML = `
+                    <h3>❌ Error</h3>
+                    <p>${error.message}</p>
+                `;
+            } finally {
+                // Reset button
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Submit Check-in';
+                responseDiv.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>

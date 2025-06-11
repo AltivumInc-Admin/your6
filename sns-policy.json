@@ -1,0 +1,51 @@
+{
+  "Version": "2008-10-17",
+  "Id": "Your6AlertsPolicy",
+  "Statement": [
+    {
+      "Sid": "AllowAccountAccess",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::205930636302:root"
+      },
+      "Action": [
+        "SNS:GetTopicAttributes",
+        "SNS:SetTopicAttributes",
+        "SNS:AddPermission",
+        "SNS:RemovePermission",
+        "SNS:DeleteTopic",
+        "SNS:Subscribe",
+        "SNS:ListSubscriptionsByTopic",
+        "SNS:Publish"
+      ],
+      "Resource": "arn:aws:sns:us-east-1:205930636302:Your6-TrustedContactAlerts"
+    },
+    {
+      "Sid": "AllowLambdaPublish",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "lambda.amazonaws.com"
+      },
+      "Action": "SNS:Publish",
+      "Resource": "arn:aws:sns:us-east-1:205930636302:Your6-TrustedContactAlerts"
+    },
+    {
+      "Sid": "AllowEmailSubscriptions",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": [
+        "SNS:Subscribe",
+        "SNS:Receive"
+      ],
+      "Resource": "arn:aws:sns:us-east-1:205930636302:Your6-TrustedContactAlerts",
+      "Condition": {
+        "StringLike": {
+          "SNS:Protocol": [
+            "email",
+            "email-json"
+          ]
+        }
+      }
+    }
+  ]
+}
