@@ -61,6 +61,15 @@ class PredictiveRiskAnalytics:
         self.events = events_client
         self.pattern_cache = {}
     
+    def _get_user_history(self, user_id: str) -> Dict:
+        """Get user history from DynamoDB"""
+        try:
+            response = self.dynamodb_table.get_item(Key={'userId': user_id})
+            return response.get('Item', {})
+        except Exception as e:
+            logger.error(f"Error fetching user history: {str(e)}")
+            return {}
+    
     def analyze_user_risk(self, user_id: str) -> Dict:
         """
         Comprehensive risk analysis for a user

@@ -1,59 +1,29 @@
 {
-  "Comment": "Your6 Enhanced Check-in Workflow with Phase 3 AI Features",
-  "StartAt": "ProcessCheckin",
+  "Comment": "Your6 Risk Assessment and Alert Routing Workflow",
+  "StartAt": "EvaluateRisk",
   "States": {
-    "ProcessCheckin": {
-      "Type": "Task",
-      "Resource": "arn:aws:lambda:us-east-1:205930636302:function:Your6-CheckinProcessor",
-      "Comment": "Process check-in with Phase 3 enhanced AI analysis",
-      "ResultPath": "$.checkinResult",
-      "Retry": [
-        {
-          "ErrorEquals": ["States.TaskFailed"],
-          "IntervalSeconds": 2,
-          "MaxAttempts": 3,
-          "BackoffRate": 2
-        }
-      ],
-      "Catch": [
-        {
-          "ErrorEquals": ["States.ALL"],
-          "Next": "HandleCheckinFailure",
-          "ResultPath": "$.error"
-        }
-      ],
-      "Next": "EvaluateRisk"
-    },
     "EvaluateRisk": {
       "Type": "Choice",
-      "Comment": "Evaluate both sentiment and risk scores",
+      "Comment": "Evaluate risk scores from processed check-in",
       "Choices": [
         {
-          "And": [
-            {
-              "Variable": "$.checkinResult.risk_score",
-              "NumericGreaterThan": 95
-            }
-          ],
+          "Variable": "$.detail.riskScore",
+          "NumericGreaterThan": 95,
           "Next": "CrisisProtocol"
         },
         {
-          "And": [
-            {
-              "Variable": "$.checkinResult.risk_score",
-              "NumericGreaterThan": 85
-            }
-          ],
+          "Variable": "$.detail.riskScore",
+          "NumericGreaterThan": 85,
           "Next": "ImmediateIntervention"
         },
         {
           "Or": [
             {
-              "Variable": "$.checkinResult.score",
+              "Variable": "$.detail.sentimentScore",
               "NumericLessThan": -0.6
             },
             {
-              "Variable": "$.checkinResult.risk_score",
+              "Variable": "$.detail.riskScore",
               "NumericGreaterThan": 50
             }
           ],
@@ -62,11 +32,11 @@
         {
           "And": [
             {
-              "Variable": "$.checkinResult.trajectory",
+              "Variable": "$.detail.trajectory",
               "StringEquals": "declining"
             },
             {
-              "Variable": "$.checkinResult.risk_score",
+              "Variable": "$.detail.riskScore",
               "NumericGreaterThan": 30
             }
           ],
@@ -91,7 +61,7 @@
                   {
                     "Source": "your6.checkin.crisis",
                     "DetailType": "Crisis Protocol Alert",
-                    "Detail.$": "States.JsonToString($.checkinResult)"
+                    "Detail.$": "States.JsonToString($.detail)"
                   }
                 ]
               },
@@ -108,7 +78,7 @@
               "Parameters": {
                 "TopicArn": "arn:aws:sns:us-east-1:205930636302:Your6-OperationsAlerts",
                 "Subject": "URGENT: Your6 Crisis Protocol Activated",
-                "Message.$": "States.Format('Crisis protocol activated for user {} with risk score {}. Immediate intervention required.', $.checkinResult.userId, $.checkinResult.risk_score)"
+                "Message.$": "States.Format('Crisis protocol activated for user {} with risk score {}. Immediate intervention required.', $.detail.userId, $.detail.riskScore)"
               },
               "End": true
             }
@@ -126,7 +96,7 @@
           {
             "Source": "your6.checkin.highrisk",
             "DetailType": "Immediate Intervention Required",
-            "Detail.$": "States.JsonToString($.checkinResult)"
+            "Detail.$": "States.JsonToString($.detail)"
           }
         ]
       },
@@ -143,10 +113,10 @@
             "Source": "your6.checkin",
             "DetailType": "Low Sentiment Alert",
             "Detail": {
-              "userId.$": "$.checkinResult.userId",
-              "sentimentScore.$": "$.checkinResult.score",
-              "riskScore.$": "$.checkinResult.risk_score",
-              "textPreview.$": "$.checkinResult.text",
+              "userId.$": "$.detail.userId",
+              "sentimentScore.$": "$.detail.sentimentScore",
+              "riskScore.$": "$.detail.riskScore",
+              "textPreview.$": "$.detail.textPreview",
               "alertType": "STANDARD"
             }
           }
@@ -164,7 +134,7 @@
           {
             "Source": "your6.checkin.proactive",
             "DetailType": "Proactive Outreach Recommended",
-            "Detail.$": "States.JsonToString($.checkinResult)"
+            "Detail.$": "States.JsonToString($.detail)"
           }
         ]
       },
@@ -179,7 +149,7 @@
         "TableName": "your6-users",
         "Key": {
           "userId": {
-            "S.$": "$.checkinResult.userId"
+            "S.$": "$.detail.userId"
           }
         },
         "UpdateExpression": "SET lastCrisisIntervention = :timestamp, crisisInterventionCount = if_not_exists(crisisInterventionCount, :zero) + :one",
@@ -200,41 +170,16 @@
     },
     "CheckinComplete": {
       "Type": "Pass",
-      "Comment": "Check-in processed successfully with Phase 3 enhancements",
-      "Result": "Check-in complete",
+      "Comment": "Risk assessment and alert routing complete",
+      "Result": "Risk assessment complete",
       "Parameters": {
         "status": "success",
-        "userId.$": "$.checkinResult.userId",
-        "sentiment.$": "$.checkinResult.sentiment",
-        "sentimentScore.$": "$.checkinResult.score",
-        "riskScore.$": "$.checkinResult.risk_score",
-        "trajectory.$": "$.checkinResult.trajectory",
-        "alertTriggered.$": "$.checkinResult.alertTriggered",
-        "ensembleUsed.$": "$.checkinResult.aiMetadata.ensemble_used",
-        "phase3Enhanced.$": "$.checkinResult.aiMetadata.phase3_enhanced"
+        "userId.$": "$.detail.userId",
+        "riskScore.$": "$.detail.riskScore",
+        "alertTriggered.$": "$.detail.alertTriggered",
+        "processedAt.$": "$$.State.EnteredTime"
       },
       "End": true
-    },
-    "HandleCheckinFailure": {
-      "Type": "Pass",
-      "Comment": "Handle Lambda execution failure",
-      "Result": "Check-in failed",
-      "Next": "NotifyFailure"
-    },
-    "NotifyFailure": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::sns:publish",
-      "Parameters": {
-        "TopicArn": "arn:aws:sns:us-east-1:205930636302:Your6-TrustedContactAlerts",
-        "Subject": "Your6 Check-in Processing Failed",
-        "Message.$": "States.Format('Check-in processing failed for user. Error: {}', $.error.Cause)"
-      },
-      "Next": "WorkflowFailed"
-    },
-    "WorkflowFailed": {
-      "Type": "Fail",
-      "Error": "CheckinProcessingFailed",
-      "Cause": "The check-in could not be processed due to an error"
     }
   }
 }

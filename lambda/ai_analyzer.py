@@ -4,6 +4,7 @@ import re
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime, timedelta
 from collections import defaultdict
+from decimal import Decimal
 import boto3
 from crisis_failsafe import apply_crisis_failsafe
 
@@ -98,6 +99,31 @@ class AdvancedSentimentAnalyzer:
             logger.warning(f"Syntax analysis failed: {str(e)}, continuing without it")
             syntax_result = {'SyntaxTokens': []}
         
+        # DIAGNOSTIC: Log raw Comprehend response
+        logger.info(f"RAW COMPREHEND RESPONSE: {json.dumps(sentiment_result, indent=2)}")
+        logger.info(f"DETECTED SENTIMENT: {sentiment_result['Sentiment']}")
+        logger.info(f"SENTIMENT SCORES: {sentiment_result['SentimentScore']}")
+        
+        # Calculate sentiment score correctly
+        sentiment = sentiment_result['Sentiment']
+        scores = sentiment_result['SentimentScore']
+        
+        if sentiment == 'NEGATIVE':
+            sentiment_score = -scores['Negative']  # Negative value for negative sentiment
+        elif sentiment == 'POSITIVE':
+            sentiment_score = scores['Positive']   # Positive value for positive sentiment
+        elif sentiment == 'MIXED':
+            # For mixed, use the dominant score with appropriate sign
+            max_score = max(scores['Positive'], scores['Negative'])
+            if scores['Negative'] > scores['Positive']:
+                sentiment_score = -max_score
+            else:
+                sentiment_score = max_score
+        else:  # NEUTRAL
+            sentiment_score = scores.get('Neutral', 0.0)
+        
+        logger.info(f"CALCULATED SENTIMENT SCORE: {sentiment_score} for sentiment: {sentiment}")
+        
         # Calculate risk score
         risk_score, risk_factors = self._calculate_risk_score(text)
         logger.info(f"Raw risk score calculated: {risk_score}, factors: {risk_factors}")
@@ -119,9 +145,6 @@ class AdvancedSentimentAnalyzer:
         entities = self._extract_relevant_entities(entities_result, syntax_result)
         
         # Compare to baseline
-        sentiment_score = sentiment_result['SentimentScore'][sentiment_result['Sentiment'].capitalize()]
-        if sentiment_result['Sentiment'] == 'NEGATIVE':
-            sentiment_score = -sentiment_score
         
         deviation_from_baseline = abs(sentiment_score - baseline_sentiment)
         
@@ -253,8 +276,8 @@ class AdvancedSentimentAnalyzer:
                     ':analysis': analysis,
                     ':new_analysis': [{
                         'timestamp': datetime.now().isoformat(),
-                        'sentiment_score': analysis['sentiment_score'],
-                        'risk_score': analysis['risk_score']
+                        'sentiment_score': Decimal(str(analysis['sentiment_score'])),
+                        'risk_score': Decimal(str(analysis['risk_score']))
                     }],
                     ':empty_list': [],
                     ':zero': 0,

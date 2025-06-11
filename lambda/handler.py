@@ -1,6 +1,7 @@
 import json
 import logging
 from typing import Dict
+from datetime import datetime
 from utils import (
     get_user_data,
     transcribe_audio,
@@ -88,6 +89,42 @@ def lambda_handler(event: Dict, context) -> Dict:
                 logger.info("Phase 3 enhanced features active")
             if response_data['aiMetadata'].get('ensemble_used'):
                 logger.info(f"Ensemble response generated with {len(response_data['aiMetadata'].get('models_used', []))} models")
+        
+        # Trigger Step Functions workflow for risk assessment and alert routing
+        try:
+            import boto3
+            import os
+            
+            events_client = boto3.client('events', region_name='us-east-1')
+            
+            if response_data.get('risk_score', 0) > 0:
+                # Publish event to EventBridge to trigger Step Functions
+                event_detail = {
+                    'userId': user_id,
+                    'riskScore': response_data.get('risk_score', 0),
+                    'sentimentScore': response_data.get('score', 0),
+                    'sentiment': response_data.get('sentiment', 'NEUTRAL'),
+                    'alertTriggered': response_data.get('alertTriggered', False),
+                    'trajectory': response_data.get('trajectory', 'unknown'),
+                    'textPreview': text[:200],
+                    'timestamp': datetime.now().isoformat(),
+                    'checkinResult': response_data
+                }
+                
+                events_client.put_events(
+                    Entries=[{
+                        'Source': 'your6.checkin.processed',
+                        'DetailType': 'Check-in Processed',
+                        'Detail': json.dumps(event_detail)
+                    }]
+                )
+                logger.info(f"EventBridge event published for risk assessment")
+            else:
+                logger.info("No risk detected - no event published")
+                
+        except Exception as e:
+            logger.error(f"Failed to publish EventBridge event: {str(e)}")
+            # Don't fail the request if EventBridge fails
         
         # Return appropriate format
         if from_api_gateway:

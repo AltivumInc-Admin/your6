@@ -245,7 +245,7 @@ def generate_ai_response(text: str, sentiment: str, user_id: str, sentiment_scor
         service="bedrock",
         operation="invoke_model",
         user_id=user_id,
-        input_data={"text": text, "model": "claude-3.5-sonnet"}
+        input_data={"text": text, "model": "amazon.nova-pro-v1:0"}
     )
     
     # Prepare sentiment data for validation
@@ -281,21 +281,28 @@ Detected sentiment: {sentiment} (score: {sentiment_score:.2f})
 
 Provide a brief, supportive response that acknowledges their feelings and offers encouragement."""
                 
-                # Call Bedrock with retry
+                # Call Bedrock with retry - Nova Pro format
                 response, retry_metadata = retry_with_backoff(
                     bedrock.invoke_model,
                     "bedrock",
-                    modelId='anthropic.claude-3-5-sonnet-20240620-v1:0',
+                    modelId='amazon.nova-pro-v1:0',
                     contentType='application/json',
                     accept='application/json',
                     body=json.dumps({
-                        'anthropic_version': 'bedrock-2023-05-31',
-                        'max_tokens': 300,
-                        'temperature': 0.7,
-                        'messages': [{
-                            'role': 'user',
-                            'content': prompt
-                        }]
+                        "inferenceConfig": {
+                            "max_new_tokens": 300,
+                            "temperature": 0.7
+                        },
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "text": prompt
+                                    }
+                                ]
+                            }
+                        ]
                     })
                 )
                 
@@ -305,9 +312,10 @@ Provide a brief, supportive response that acknowledges their feelings and offers
             response, retry_metadata = circuit_breaker.call(invoke_bedrock_with_retry)
             
             response_body = json.loads(response['body'].read())
-            ai_text = response_body['content'][0]['text']
+            # Nova Pro response format
+            ai_text = response_body['output']['message']['content'][0]['text']
             usage = response_body.get('usage', {})
-            tokens_used = usage.get('total_tokens', 0)
+            tokens_used = usage.get('totalTokens', 0)
             
             # Validate response
             validation_result = validator.validate_response(ai_text, sentiment_data)
