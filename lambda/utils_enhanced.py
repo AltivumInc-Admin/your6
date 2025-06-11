@@ -43,7 +43,6 @@ def generate_ai_response_enhanced(text: str,
         
         # Generate base response
         if use_ensemble and sentiment_data.get('risk_score', 0) > 30:
-            # Use ensemble for higher-risk situations
             response_data = ensemble.generate_ensemble_response(
                 text,
                 sentiment_data,
@@ -97,12 +96,12 @@ def process_check_in_enhanced(user_id: str, text: str) -> Dict:
     # Advanced sentiment analysis
     sentiment_data = analyze_sentiment_advanced(text, user_id)
     
-    # Generate enhanced response
+    # Generate enhanced response - NO ENSEMBLE
     ai_response_data = generate_ai_response_enhanced(
         text,
         sentiment_data,
         user_id,
-        use_ensemble=True
+        use_ensemble=False  # Ensemble is unnecessary complexity
     )
     
     # Store enhanced check-in

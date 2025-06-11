@@ -82,6 +82,12 @@ class AdvancedSentimentAnalyzer:
             LanguageCode='en'
         )
         
+        # LOG ENTITIES FOUND
+        entities = entities_result.get('Entities', [])
+        if entities:
+            entity_summary = [(e['Type'], e['Text']) for e in entities[:5]]  # First 5
+            logger.info(f"✅ COMPREHEND ENTITIES: Found {len(entities)} entities: {entity_summary}")
+        
         # Syntax analysis for deeper understanding
         try:
             syntax_result = self.comprehend.detect_syntax(

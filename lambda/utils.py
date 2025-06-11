@@ -180,6 +180,9 @@ def analyze_sentiment(text: str, user_id: str = "unknown") -> Tuple[str, float, 
             all_scores = sentiment_response['SentimentScore']
             sentiment_score = all_scores[sentiment.capitalize()]
             
+            # LOG COMPREHEND SUCCESS
+            logger.info(f"✅ COMPREHEND WORKS: Sentiment={sentiment}, Score={sentiment_score:.3f}, Confidence={max(all_scores.values()):.3f}")
+            
             # Convert positive sentiment to positive score, negative to negative
             if sentiment == 'NEGATIVE':
                 sentiment_score = -sentiment_score
