@@ -3,6 +3,12 @@
 ## Project Overview
 Your6 is an AI-powered veteran support mobilization system built for AWS Lambda Hackathon 2025. It transforms passive mental health monitoring into active support network mobilization.
 
+## The Big Picture Problem
+
+We're building a life-critical system that must detect when a veteran is in crisis and immediately mobilize their support network. The core challenge is ensuring that when a veteran sends a message like "I have my gun and thinking about ending it all," the system MUST trigger immediate intervention without fail. Currently, we have a dangerous disconnect: our NLP correctly identifies the crisis (Comprehend detects negative sentiment, risk calculator outputs score of 90), but this critical signal gets lost in the pipeline, resulting in a risk_score of 0 reaching the API response. This means Step Functions routes the crisis through "CheckinComplete" instead of "CrisisProtocol," potentially leaving a veteran in mortal danger without help.
+
+Our immediate objective is to trace and fix this data flow issue to ensure crisis signals propagate correctly through the system. We know Amazon Comprehend works perfectly (confirmed via logs), we know the risk calculation works (logs show score of 90), and we know the alert flag works (alertTriggered: true). What we don't know is exactly where between risk calculation and API response assembly the risk_score gets reset to 0. Secondary issues include Bedrock throttling (which we can work around) and SMS pending activation (which will resolve itself). The core strategy is to methodically trace the data flow from risk calculation through to Step Functions invocation, identify where the value is lost, and ensure the complete crisis detection pipeline works end-to-end before recording our hackathon demo.
+
 ## Current Status (June 11, 2025 - Critical Issues Identified)
 - ✅ Fully deployed to AWS us-east-1
 - ✅ API endpoint: https://3il8ifyfr7.execute-api.us-east-1.amazonaws.com/prod/check-in
